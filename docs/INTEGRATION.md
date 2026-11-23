@@ -283,6 +283,8 @@ answer = client.post(
 | `LONGDOC_FALLBACKS` | `default` | `none` to disable refusal fallbacks |
 | `LONGDOC_MAX_UPLOAD_MB` | `25` | Upload size limit |
 | `LONGDOC_RATE_LIMIT_PER_MIN` | unlimited | Max uploads plus questions per client address per minute (per process) |
+| `LONGDOC_PROVIDER` | `anthropic` | `anthropic` or `openai` (then also set `LONGDOC_MODEL` and `OPENAI_API_KEY`; see [OPENAI.md](OPENAI.md)) |
+| `LONGDOC_ENV_FILE` | none | Path to a `.env` file read at startup (values never logged) |
 | `LONGDOC_LOCAL_MODEL` | none | Path to a GGUF model: answer locally instead of with Claude |
 | `LONGDOC_LOCAL_CTX` | `16384` | Local model context window in tokens |
 
@@ -481,7 +483,7 @@ child_overlap_chars=...)`.
 - [ ] The `longdoc` logger captured (`DEBUG`: request IDs and token usage; `WARNING`: truncation and
       missing authentication). Log `answer.request_id` to trace a call in Anthropic support.
 - [ ] Back up the document store, or keep your source files so documents can be re-indexed.
-- [ ] Pin the version (`longdoc-qa==0.6.0`) and read [`CHANGELOG.md`](../CHANGELOG.md) before upgrading.
+- [ ] Pin the version (`longdoc-qa==0.7.0`) and read [`CHANGELOG.md`](../CHANGELOG.md) before upgrading.
 
 ---
 

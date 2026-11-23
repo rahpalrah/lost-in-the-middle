@@ -202,9 +202,36 @@ def to_http_error(exc: Exception) -> HTTPException:
     if isinstance(exc, anthropic.APIConnectionError):
         logger.error("Could not reach the Anthropic API: %s", exc)
         return _error(503, "upstream_unavailable", "The model provider could not be reached.")
+    mapped = _openai_error(exc)
+    if mapped is not None:
+        return mapped
     if isinstance(exc, LongDocError):
         return _error(400, "bad_request", str(exc))
     raise exc
+
+
+def _openai_error(exc: Exception) -> HTTPException | None:
+    """Map OpenAI SDK errors (only if the optional package is installed)."""
+    try:
+        import openai
+    except ImportError:
+        return None
+    if isinstance(exc, openai.RateLimitError):
+        return _error(429, "rate_limited", "The model provider is rate limiting requests.")
+    if isinstance(exc, openai.APIStatusError):
+        # Includes authentication errors: report an upstream problem, never the details.
+        logger.error("OpenAI API error %s", exc.status_code)
+        return _error(
+            502,
+            "upstream_error",
+            "The model provider returned an error.",
+            upstream_status=exc.status_code,
+            request_id=getattr(exc, "request_id", None),
+        )
+    if isinstance(exc, openai.APIConnectionError):
+        logger.error("Could not reach the OpenAI API")
+        return _error(503, "upstream_unavailable", "The model provider could not be reached.")
+    return None
 
 
 # -- router ---------------------------------------------------------------------------

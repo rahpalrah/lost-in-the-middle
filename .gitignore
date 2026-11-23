@@ -12,6 +12,9 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 .env
+.env.*
+!.env.example
+*.pem
 benchmarks/**/results/
 benchmarks/**/data/
 models/

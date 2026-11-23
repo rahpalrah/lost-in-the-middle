@@ -32,9 +32,10 @@ dependencies = ["anthropic>=2.12,<3"]
 pdf = ["pypdf>=5"]
 server = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "python-multipart>=0.0.9"]
 local = ["llama-cpp-python>=0.3"]
+openai = ["openai>=1.50"]
 all = ["longdoc-qa[pdf,server]"]
 dev = [
-    "longdoc-qa[pdf,server]",
+    "longdoc-qa[pdf,server,openai]",
     "fpdf2>=2.7",
     "httpx>=0.27",
     "pytest>=8",

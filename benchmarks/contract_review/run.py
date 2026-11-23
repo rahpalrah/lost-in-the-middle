@@ -20,6 +20,10 @@ Usage:
     # Live: real Claude calls. Needs ANTHROPIC_API_KEY. Stops before exceeding --max-cost.
     python benchmarks/contract_review/run.py --live --max-cost 5
 
+    # OpenAI (your own key, billed): key from OPENAI_API_KEY or --env-file; spend is capped.
+    LONGDOC_ALLOW_LIVE_API=1 python benchmarks/contract_review/run.py --openai <model> \
+        --price-in <usd/1M> --price-out <usd/1M> --strategies retrieval --max-cost 1
+
     # Local: an open-source GGUF model on this machine. No API key, no cost.
     python benchmarks/contract_review/run.py --local models/Phi-3.5-mini-instruct-Q4_K_M.gguf
 """
@@ -87,6 +91,7 @@ API_TOKEN = "benchmark-token"
 
 
 BILLED = True  # False for local models: they cost nothing per token
+NAIVE_MAX_TOKENS = 16_000
 
 
 def cost_usd(usage: dict[str, int]) -> float:
@@ -337,7 +342,7 @@ def run_naive(
         start = time.perf_counter()
         with client.beta.messages.stream(
             model=MODEL,
-            max_tokens=16_000,
+            max_tokens=NAIVE_MAX_TOKENS,
             system=NAIVE_SYSTEM,
             output_config={"effort": EFFORT},
             messages=[
@@ -458,7 +463,7 @@ def write_report(
             "",
         ]
     lines += [
-        f"- Model: `{model_label}`" + (f", effort `{EFFORT}`" if mode != "local" else ""),
+        f"- Model: `{model_label}`" + (f", effort `{EFFORT}`" if mode == "live" else ""),
         f"- Retrieval: {pack_info.get('retriever', 'BM25 keyword')}",
         f"- Contract pack: {pack_info['pages']} pages, {pack_info['sections']} sections, "
         f"~{pack_info['approx_tokens']:,} tokens",
@@ -495,7 +500,7 @@ def write_report(
         lines += ["", "## Not run", ""]
         lines += [f"- **{k}**: {why}" for k, why in skipped.items()]
     failures = [r for r in results if not r.correct]
-    if failures and mode in ("live", "local"):
+    if failures and mode in ("live", "openai", "local"):
         lines += ["", "## Failures", ""]
         for r in failures:
             lines += [
@@ -518,9 +523,28 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--live", action="store_true", help="Real Claude calls (costs money)")
     mode.add_argument("--offline", action="store_true", help="Fake model; plumbing check only")
     mode.add_argument(
+        "--openai",
+        metavar="MODEL",
+        help="Real OpenAI calls with YOUR key (costs money; needs --price-in/--price-out)",
+    )
+    mode.add_argument(
         "--local", type=Path, metavar="MODEL.gguf", help="Local GGUF model; no API key, no cost"
     )
     parser.add_argument("--n-ctx", type=int, default=16_384, help="Local model context window")
+    parser.add_argument("--env-file", help="Load OPENAI_API_KEY etc. from this .env file")
+    parser.add_argument("--price-in", type=float, help="OpenAI: US$ per 1M input tokens")
+    parser.add_argument("--price-out", type=float, help="OpenAI: US$ per 1M output tokens")
+    parser.add_argument(
+        "--price-cached-in",
+        type=float,
+        help="OpenAI: US$ per 1M cached input tokens (default: same as --price-in)",
+    )
+    parser.add_argument(
+        "--max-answer-tokens",
+        type=int,
+        default=4_000,
+        help="OpenAI: cap on tokens per answer (reasoning models count thinking tokens too)",
+    )
     parser.add_argument(
         "--embed-model",
         type=Path,
@@ -539,14 +563,24 @@ def main(argv: list[str] | None = None) -> int:
         default=0,
         help="Run the naive baseline on only the first N questions (0 = all)",
     )
-    parser.add_argument("--max-cost", type=float, default=5.0, help="US$ cap for --live")
+    parser.add_argument("--max-cost", type=float, default=5.0, help="US$ cap for --live/--openai")
     parser.add_argument("--strategies", default="retrieval,cached_document,naive")
     parser.add_argument("--out", type=Path, default=HERE / "results")
     args = parser.parse_args(argv)
 
-    if args.live and os.environ.get("LONGDOC_ALLOW_LIVE_API") != "1":
+    if args.env_file:
+        from longdoc.env import load_env_file
+        from longdoc.exceptions import ConfigurationError
+
+        try:
+            load_env_file(args.env_file)
+        except ConfigurationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+    billed_run = bool(args.live or args.openai)
+    if billed_run and os.environ.get("LONGDOC_ALLOW_LIVE_API") != "1":
         print(
-            "error: --live makes billed Anthropic API calls. Set LONGDOC_ALLOW_LIVE_API=1 to "
+            "error: --live and --openai make billed API calls. Set LONGDOC_ALLOW_LIVE_API=1 to "
             "confirm you intend that. Use --local or --offline for free runs.",
             file=sys.stderr,
         )
@@ -554,6 +588,21 @@ def main(argv: list[str] | None = None) -> int:
     if args.live and not os.environ.get("ANTHROPIC_API_KEY"):
         print("error: --live needs ANTHROPIC_API_KEY in the environment", file=sys.stderr)
         return 1
+    if args.openai:
+        if not os.environ.get("OPENAI_API_KEY"):
+            print(
+                "error: --openai needs OPENAI_API_KEY in the environment (or --env-file). "
+                "See docs/OPENAI.md.",
+                file=sys.stderr,
+            )
+            return 1
+        if args.price_in is None or args.price_out is None:
+            print(
+                "error: --openai needs --price-in and --price-out (US$ per 1M tokens, from "
+                "your plan) so the --max-cost spending cap can be enforced.",
+                file=sys.stderr,
+            )
+            return 1
     strategies = [s.strip() for s in args.strategies.split(",") if s.strip()]
     questions = json.loads((HERE / "questions.json").read_text())["questions"]
 
@@ -581,13 +630,27 @@ def main(argv: list[str] | None = None) -> int:
         "sections": len(ParentChildChunker().chunk(pack).parents),
     }
 
-    global BILLED
-    run_mode = "live" if args.live else "local" if args.local else "offline"
+    global BILLED, MODEL, PRICE_INPUT, PRICE_OUTPUT, PRICE_CACHE_READ, PRICE_CACHE_WRITE_5M
+    global NAIVE_MAX_TOKENS
+    run_mode = (
+        "live" if args.live else "openai" if args.openai else "local" if args.local else "offline"
+    )
     model_label = MODEL
     config = QAConfig(model=MODEL, effort=EFFORT)
     if args.live:
         sync_client: Any = anthropic.Anthropic()
         async_client: Any = anthropic.AsyncAnthropic()
+    elif args.openai:
+        from longdoc.openai_client import OpenAIClient
+
+        MODEL = model_label = args.openai
+        PRICE_INPUT, PRICE_OUTPUT = args.price_in, args.price_out
+        PRICE_CACHE_READ = args.price_cached_in if args.price_cached_in is not None else PRICE_INPUT
+        PRICE_CACHE_WRITE_5M = PRICE_INPUT  # OpenAI does not bill a separate cache write
+        NAIVE_MAX_TOKENS = args.max_answer_tokens
+        sync_client = OpenAIClient()
+        async_client = sync_client.to_async()
+        config = QAConfig(model=MODEL, max_tokens=args.max_answer_tokens, fallbacks=None)
     elif args.local:
         from longdoc.local import AsyncLlamaCppClient, LlamaCppClient
 
@@ -634,7 +697,7 @@ def main(argv: list[str] | None = None) -> int:
         async_client=async_client,
         retriever_factory=retriever_factory,
     )
-    budget = Budget(limit=args.max_cost if args.live else float("inf"))
+    budget = Budget(limit=args.max_cost if billed_run else float("inf"))
     skipped: dict[str, str] = {}
     # Conservative per-call estimates used only by the budget guard.
     doc_tokens = pack_info["approx_tokens"]
@@ -724,7 +787,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.local:
         print("\nCost: $0 (local model).")
-    elif args.live:
+    elif billed_run:
         print(f"\nTotal spent: ${budget.spent:.2f}")
     else:
         print(

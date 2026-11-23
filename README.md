@@ -37,6 +37,7 @@ including cache reads and writes.
 pip install longdoc-qa                # library: text and Markdown
 pip install "longdoc-qa[pdf]"         # + PDF support
 pip install "longdoc-qa[server]"      # + HTTP API (FastAPI, Uvicorn)
+pip install "longdoc-qa[openai]"      # + use OpenAI instead of Claude
 pip install "longdoc-qa[local]"       # + local open-source models (no API key)
 pip install "longdoc-qa[all]"         # everything
 ```
@@ -233,6 +234,28 @@ Any ASGI server works: `uvicorn longdoc.server.asgi:app --workers 4`.
 longdoc ask contract.pdf "What is the notice period?" "Is there a termination fee?"
 longdoc ask contract.pdf "Summarise the payment terms" --strategy cached_document --json
 ```
+
+## Using OpenAI instead of Claude
+
+```python
+from longdoc import DocumentQA, QAConfig
+from longdoc.openai_client import OpenAIClient
+
+qa = DocumentQA.from_file(
+    "contract.pdf",
+    client=OpenAIClient(),  # key comes from the OPENAI_API_KEY variable
+    config=QAConfig(model="<your chat model>", fallbacks=None),
+)
+```
+
+```bash
+cp .env.example .env && chmod 600 .env        # put your own key in .env (git-ignored)
+longdoc --env-file .env ask contract.pdf "What is the notice period?" --provider openai --model <model>
+```
+
+**Never commit or paste a key.** Step-by-step setup, safe ways to provide the key, spending
+controls and what is and is not verified: [docs/OPENAI.md](docs/OPENAI.md). The adapter has been
+tested with fake clients only, not against the real OpenAI service.
 
 ## Without an API key: local models
 

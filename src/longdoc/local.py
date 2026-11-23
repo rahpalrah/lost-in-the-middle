@@ -69,6 +69,14 @@ class LocalUsage:
 
 
 @dataclass(frozen=True, slots=True)
+class LocalStopDetails:
+    """Why a response was refused: a category and the provider's explanation, if any."""
+
+    category: str | None = None
+    explanation: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class LocalMessage:
     """A completed local-model response."""
 
@@ -76,7 +84,7 @@ class LocalMessage:
     model: str
     stop_reason: str
     usage: LocalUsage
-    stop_details: None = None
+    stop_details: LocalStopDetails | None = None
     _request_id: str | None = None
 
 

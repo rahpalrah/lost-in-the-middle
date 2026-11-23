@@ -20,6 +20,7 @@ from .exceptions import ConfigurationError, RefusalError
 from .loaders import load_document
 from .local import AsyncLlamaCppClient, LlamaCppClient, LocalMessage
 from .models import Answer, ChunkedDocument, Document, ParentChunk, TokenUsage
+from .openai_client import AsyncOpenAIClient, OpenAIClient
 from .prompts import SYSTEM_PROMPT, clean_answer, extract_citations, system_blocks, user_message
 from .retrieval import BM25Retriever, Retriever, select_parents
 
@@ -189,7 +190,8 @@ class DocumentQA(_QACore):
         chunking: Chunk sizes (ignored if ``document`` is already chunked).
         retriever: Custom search backend. Defaults to :class:`BM25Retriever`.
         client: A configured ``anthropic.Anthropic`` client, or a
-            :class:`longdoc.local.LlamaCppClient` to run on a local model. Defaults to an
+            :class:`longdoc.local.LlamaCppClient` (local model) or
+            :class:`longdoc.openai_client.OpenAIClient` (OpenAI). Defaults to an
             Anthropic client that reads credentials from the environment
             (``ANTHROPIC_API_KEY`` and friends).
 
@@ -206,10 +208,12 @@ class DocumentQA(_QACore):
         config: QAConfig | None = None,
         chunking: ChunkingConfig | None = None,
         retriever: Retriever | None = None,
-        client: anthropic.Anthropic | LlamaCppClient | None = None,
+        client: anthropic.Anthropic | LlamaCppClient | OpenAIClient | None = None,
     ) -> None:
         super().__init__(document, config=config, chunking=chunking, retriever=retriever)
-        self.client: anthropic.Anthropic | LlamaCppClient = client or anthropic.Anthropic()
+        self.client: anthropic.Anthropic | LlamaCppClient | OpenAIClient = (
+            client or anthropic.Anthropic()
+        )
 
     @classmethod
     def from_file(cls, path: str | os.PathLike[str], **kwargs: Any) -> DocumentQA:
@@ -253,10 +257,10 @@ class AsyncDocumentQA(_QACore):
         config: QAConfig | None = None,
         chunking: ChunkingConfig | None = None,
         retriever: Retriever | None = None,
-        client: anthropic.AsyncAnthropic | AsyncLlamaCppClient | None = None,
+        client: anthropic.AsyncAnthropic | AsyncLlamaCppClient | AsyncOpenAIClient | None = None,
     ) -> None:
         super().__init__(document, config=config, chunking=chunking, retriever=retriever)
-        self.client: anthropic.AsyncAnthropic | AsyncLlamaCppClient = (
+        self.client: anthropic.AsyncAnthropic | AsyncLlamaCppClient | AsyncOpenAIClient = (
             client or anthropic.AsyncAnthropic()
         )
 

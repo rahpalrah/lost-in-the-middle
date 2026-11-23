@@ -19,6 +19,14 @@ Environment variables:
     ``default`` (the default) or ``none``.
 ``LONGDOC_MAX_UPLOAD_MB``
     Upload size limit in megabytes (default 25).
+``LONGDOC_PROVIDER``
+    ``anthropic`` (default) or ``openai``. For OpenAI set ``LONGDOC_MODEL`` to a chat model
+    your account can use, and put the key in ``OPENAI_API_KEY`` (never in code).
+``LONGDOC_OPENAI_BASE_URL``
+    Optional: an OpenAI-compatible server instead of api.openai.com.
+``LONGDOC_ENV_FILE``
+    Optional path to a ``.env`` file with ``OPENAI_API_KEY`` and other settings. Real
+    environment variables take precedence over the file.
 ``LONGDOC_RATE_LIMIT_PER_MIN``
     Maximum uploads plus questions per client address per minute (default: unlimited).
 ``LONGDOC_LOCAL_MODEL``
@@ -38,6 +46,8 @@ from typing import Any
 from fastapi import FastAPI
 
 from ..config import QAConfig, Strategy
+from ..env import read_env_file
+from ..exceptions import ConfigurationError
 from ..service import DocumentService
 from ..store import DocumentStore, InMemoryStore, JSONFileStore
 from .app import create_app
@@ -62,10 +72,25 @@ def config_from_env(env: Mapping[str, str]) -> QAConfig:
 def app_from_env(env: Mapping[str, str] | None = None) -> FastAPI:
     """Build the application from environment variables."""
     env = os.environ if env is None else env
+    if env_file := env.get("LONGDOC_ENV_FILE"):
+        env = {**read_env_file(env_file), **dict(env)}  # real environment variables win
     store_dir = env.get("LONGDOC_STORE_DIR")
     store: DocumentStore = JSONFileStore(store_dir) if store_dir else InMemoryStore()
     config = config_from_env(env)
-    client = None
+    client: Any = None
+    provider = env.get("LONGDOC_PROVIDER", "anthropic").lower()
+    if provider == "openai":
+        from ..openai_client import OpenAIClient
+
+        if not env.get("LONGDOC_MODEL"):
+            raise ConfigurationError("LONGDOC_PROVIDER=openai requires LONGDOC_MODEL.")
+        client = OpenAIClient(
+            api_key=env.get("OPENAI_API_KEY") or None,
+            base_url=env.get("LONGDOC_OPENAI_BASE_URL") or None,
+        )
+        config = replace(config, fallbacks=None)
+    elif provider != "anthropic":
+        raise ConfigurationError(f"Unknown LONGDOC_PROVIDER {provider!r}: use anthropic or openai.")
     if local_model := env.get("LONGDOC_LOCAL_MODEL"):
         from ..local import LlamaCppClient
 

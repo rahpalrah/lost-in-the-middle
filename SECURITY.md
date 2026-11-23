@@ -34,6 +34,15 @@ not in a public issue. We aim to acknowledge reports within 3 working days.
 | **Improper output handling (LLM05)** | The API returns JSON; citation IDs are checked against the real document. | Escape answer text before rendering it as HTML. |
 | **Supply chain (LLM03)** | CI runs Bandit and `pip-audit`; Dependabot proposes updates. | Pin versions and review updates. |
 
+## Handling API keys
+
+- Keys are read from environment variables (or an explicitly named `.env` file); they are never
+  written to logs, error messages, API responses or `repr()` output. Tests check this.
+- `.env` and `*.pem` are git-ignored, and a test fails if any tracked file contains
+  key-shaped text (`sk-...`).
+- This repository is public. Enable GitHub **secret scanning and push protection**, and keep
+  the provider-side spending limit on every key. See [docs/OPENAI.md](docs/OPENAI.md).
+
 ## Known advisories
 
 - **PYSEC-2026-2447 (`diskcache` 5.6.3, no fixed version at time of writing).** `diskcache`

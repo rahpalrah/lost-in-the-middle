@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-23
+
+### Added
+
+- **OpenAI support.** `OpenAIClient` / `AsyncOpenAIClient` (`openai` extra) answer with an
+  OpenAI chat model or any OpenAI-compatible server, in `DocumentQA`, `DocumentService`, the
+  CLI (`--provider openai`) and the HTTP server (`LONGDOC_PROVIDER=openai`). Cached prompt
+  tokens, refusals and truncation are mapped to the same `Answer` fields.
+- Safe key handling: `.env.example`, `longdoc.env` (`--env-file`, `LONGDOC_ENV_FILE`; values are
+  never logged; permission warning), a clear error if a Claude model name is sent to OpenAI,
+  OpenAI errors mapped without echoing key fragments, `docs/OPENAI.md`.
+- Tests fail if a tracked file contains key-shaped text; the test guard also removes OpenAI
+  credentials and blocks the OpenAI base URL.
+- Benchmark `--openai MODEL` mode with a required spending cap, consent flag and price inputs.
+
 ## [0.6.0] - 2026-11-23
 
 Security hardening and quality evaluation (see `docs/QUALITY_REPORT.md`).

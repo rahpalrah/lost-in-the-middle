@@ -8,11 +8,13 @@ import logging
 import os
 import sys
 from collections.abc import Sequence
+from typing import Any
 
 from ._version import __version__
 from .client import DocumentQA
 from .config import QAConfig, Strategy
-from .exceptions import LongDocError
+from .env import load_env_file
+from .exceptions import ConfigurationError, LongDocError
 from .serialization import answer_to_dict
 
 
@@ -22,6 +24,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("-v", "--verbose", action="store_true", help="Debug logging")
+    parser.add_argument(
+        "--env-file",
+        metavar="PATH",
+        help="Load variables such as OPENAI_API_KEY from this .env file (never printed)",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     ask = sub.add_parser("ask", help="Ask questions about a file")
@@ -33,7 +40,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default=Strategy.RETRIEVAL.value,
         help="retrieval (default) or cached_document",
     )
-    ask.add_argument("--model", help="Claude model ID")
+    ask.add_argument("--model", help="Model ID (required with --provider openai)")
+    ask.add_argument(
+        "--provider",
+        choices=["anthropic", "openai"],
+        default="anthropic",
+        help="Which API answers the questions (default: anthropic)",
+    )
+    ask.add_argument(
+        "--openai-base-url", help="Use an OpenAI-compatible server instead of api.openai.com"
+    )
     ask.add_argument("--json", action="store_true", help="Print answers as JSON lines")
     ask.add_argument(
         "--local-model",
@@ -54,7 +70,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _ask(args: argparse.Namespace) -> int:
     overrides = {"model": args.model} if args.model else {}
-    client = None
+    client: Any = None
+    if args.provider == "openai":
+        from .openai_client import OpenAIClient
+
+        if args.local_model:
+            raise ConfigurationError("Use either --provider openai or --local-model, not both.")
+        if not args.model:
+            raise ConfigurationError("--provider openai needs --model (a chat model you can use).")
+        client = OpenAIClient(base_url=args.openai_base_url)
+        overrides = {"fallbacks": None, **overrides}
     if args.local_model:
         from .local import LlamaCppClient
 
@@ -95,6 +120,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Entry point for the ``longdoc`` command."""
     args = _build_parser().parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING)
+    if args.env_file:
+        try:
+            load_env_file(args.env_file)
+        except ConfigurationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
     try:
         return _ask(args) if args.command == "ask" else _serve(args)
     except LongDocError as exc:
@@ -106,7 +137,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         if isinstance(exc, anthropic.APIError):
             print(f"API error: {exc}", file=sys.stderr)
             return 2
+        message = _openai_error_message(exc)
+        if message:
+            print(f"API error: {message}", file=sys.stderr)
+            return 2
         raise
+
+
+def _openai_error_message(exc: Exception) -> str | None:
+    """Describe an OpenAI SDK error without risking an echoed fragment of the API key."""
+    try:
+        import openai
+    except ImportError:
+        return None
+    if isinstance(exc, openai.AuthenticationError):
+        return "OpenAI rejected the API key. Check OPENAI_API_KEY (see docs/OPENAI.md)."
+    if isinstance(exc, openai.PermissionDeniedError):
+        return "OpenAI denied access to this model or project for your key."
+    if isinstance(exc, openai.RateLimitError):
+        return "OpenAI rate limit or quota reached. Try again later or check your plan."
+    if isinstance(exc, openai.APIConnectionError):
+        return "Could not reach the OpenAI API."
+    if isinstance(exc, openai.APIStatusError):
+        return f"OpenAI returned HTTP {exc.status_code}."
+    return None
 
 
 if __name__ == "__main__":  # pragma: no cover

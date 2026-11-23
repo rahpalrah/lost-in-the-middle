@@ -32,6 +32,7 @@ from .exceptions import LongDocError
 from .loaders import load_bytes, load_document
 from .local import AsyncLlamaCppClient, LlamaCppClient
 from .models import Answer, ChunkedDocument, Document, ParentChunk, TokenUsage
+from .openai_client import AsyncOpenAIClient, OpenAIClient
 from .retrieval import BM25Retriever, Retriever
 from .store import DocumentStore, InMemoryStore, validate_document_id
 
@@ -100,8 +101,10 @@ class DocumentService:
         store: DocumentStore | None = None,
         config: QAConfig | None = None,
         chunking: ChunkingConfig | None = None,
-        client: anthropic.Anthropic | LlamaCppClient | None = None,
-        async_client: anthropic.AsyncAnthropic | AsyncLlamaCppClient | None = None,
+        client: anthropic.Anthropic | LlamaCppClient | OpenAIClient | None = None,
+        async_client: (
+            anthropic.AsyncAnthropic | AsyncLlamaCppClient | AsyncOpenAIClient | None
+        ) = None,
         retriever_factory: Callable[[], Retriever] = BM25Retriever,
         max_cached_documents: int = 64,
     ) -> None:
@@ -123,7 +126,7 @@ class DocumentService:
     # -- clients ---------------------------------------------------------------------
 
     @property
-    def client(self) -> anthropic.Anthropic | LlamaCppClient:
+    def client(self) -> anthropic.Anthropic | LlamaCppClient | OpenAIClient:
         """The shared sync client (created on first use)."""
         with self._lock:
             if self._client is None:
@@ -131,12 +134,14 @@ class DocumentService:
             return self._client
 
     @property
-    def async_client(self) -> anthropic.AsyncAnthropic | AsyncLlamaCppClient:
+    def async_client(self) -> anthropic.AsyncAnthropic | AsyncLlamaCppClient | AsyncOpenAIClient:
         """The shared async client (created on first use)."""
         with self._lock:
             if self._async_client is None:
                 if isinstance(self._client, LlamaCppClient):
                     self._async_client = AsyncLlamaCppClient(self._client)
+                elif isinstance(self._client, OpenAIClient):
+                    self._async_client = self._client.to_async()
                 else:
                     self._async_client = anthropic.AsyncAnthropic()
             return self._async_client
