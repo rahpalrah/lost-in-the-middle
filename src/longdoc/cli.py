@@ -150,12 +150,19 @@ def _openai_error_message(exc: Exception) -> str | None:
         import openai
     except ImportError:
         return None
+    from .openai_client import is_out_of_credit
+
     if isinstance(exc, openai.AuthenticationError):
         return "OpenAI rejected the API key. Check OPENAI_API_KEY (see docs/OPENAI.md)."
     if isinstance(exc, openai.PermissionDeniedError):
         return "OpenAI denied access to this model or project for your key."
     if isinstance(exc, openai.RateLimitError):
-        return "OpenAI rate limit or quota reached. Try again later or check your plan."
+        if is_out_of_credit(exc):
+            return (
+                "Your OpenAI account has no credit left. Add credit at "
+                "https://platform.openai.com/settings/organization/billing/ and try again."
+            )
+        return "OpenAI rate limit reached. Wait a moment and try again."
     if isinstance(exc, openai.APIConnectionError):
         return "Could not reach the OpenAI API."
     if isinstance(exc, openai.APIStatusError):

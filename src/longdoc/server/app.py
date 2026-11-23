@@ -216,7 +216,19 @@ def _openai_error(exc: Exception) -> HTTPException | None:
         import openai
     except ImportError:
         return None
+    from ..openai_client import is_out_of_credit
+
     if isinstance(exc, openai.RateLimitError):
+        if is_out_of_credit(exc):
+            # Same HTTP 429 as rate limiting, but retrying will never help: report it clearly
+            # as an upstream account problem so clients do not retry in a loop.
+            logger.error("OpenAI account has no remaining credit or quota")
+            return _error(
+                502,
+                "upstream_quota_exceeded",
+                "The model provider account has no remaining credit. Add billing credit; "
+                "retrying will not help.",
+            )
         return _error(429, "rate_limited", "The model provider is rate limiting requests.")
     if isinstance(exc, openai.APIStatusError):
         # Includes authentication errors: report an upstream problem, never the details.

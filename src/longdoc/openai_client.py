@@ -132,6 +132,24 @@ def parse_response(response: Any, requested_model: str) -> LocalMessage:
     )
 
 
+_OUT_OF_CREDIT_CODES = frozenset(
+    {"insufficient_quota", "credit_balance_exhausted", "billing_hard_limit_reached"}
+)
+
+
+def is_out_of_credit(exc: BaseException) -> bool:
+    """True if an OpenAI error means the account has no credit or quota left.
+
+    OpenAI reports this as HTTP 429, the same status as ordinary rate limiting, but retrying
+    never helps. Seen in practice: ``type="insufficient_quota"`` with
+    ``code="credit_balance_exhausted"``.
+    """
+    return (
+        getattr(exc, "type", None) == "insufficient_quota"
+        or getattr(exc, "code", None) in _OUT_OF_CREDIT_CODES
+    )
+
+
 def _warmup_message(model: str | None) -> LocalMessage:
     return LocalMessage([], model or "", "max_tokens", LocalUsage(0, 0))
 

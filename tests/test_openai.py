@@ -205,6 +205,12 @@ def _status_error(cls: type[openai.APIStatusError], status: int, message: str) -
     return cls(message, response=httpx2.Response(status, request=request), body=None)
 
 
+def test_ordinary_rate_limit_is_not_out_of_credit() -> None:
+    from longdoc.openai_client import is_out_of_credit
+
+    assert not is_out_of_credit(_status_error(openai.RateLimitError, 429, "slow down"))
+
+
 @pytest.mark.parametrize(
     ("exc", "status", "code"),
     [
@@ -233,6 +239,41 @@ def test_server_maps_openai_errors_without_leaking(exc: Exception, status: int, 
     assert r.json()["error"] == code
     assert FAKE_KEY not in r.text
     assert "boom" not in r.text
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        # the shape OpenAI returned in a real call
+        {"type": "insufficient_quota", "code": "credit_balance_exhausted", "param": None},
+        {"code": "insufficient_quota", "message": "You exceeded your current quota."},
+        {"type": "insufficient_quota", "code": None},
+    ],
+)
+def test_out_of_credit_is_not_reported_as_a_retryable_rate_limit(body: dict[str, Any]) -> None:
+    from longdoc.openai_client import is_out_of_credit
+
+    request = httpx2.Request("POST", "https://api.openai.com/v1/chat/completions")
+    exc = openai.RateLimitError(
+        "You have no credits remaining.",
+        response=httpx2.Response(429, request=request),
+        body={"message": "You have no credits remaining.", **body},
+    )
+    assert is_out_of_credit(exc)
+    service = DocumentService(
+        client=OpenAIClient(
+            client=FakeOpenAI(raises=exc), async_client=FakeAsyncOpenAI(raises=exc)
+        ),
+        config=CFG,
+    )
+    service.add_document(DOC, document_id="d")
+    api = TestClient(create_app(service, api_key="k"))
+    r = api.post(
+        "/v1/documents/d/ask", json={"question": "q?"}, headers={"Authorization": "Bearer k"}
+    )
+    assert r.status_code == 502
+    assert r.json()["error"] == "upstream_quota_exceeded"
+    assert "retrying will not help" in r.json()["message"]
 
 
 # -- ASGI configuration ------------------------------------------------------------------
