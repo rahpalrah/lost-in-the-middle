@@ -79,6 +79,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("runs", nargs="+", help="results.json[:bm25|hybrid]")
     ap.add_argument("--models-dir", type=Path, default=Path("models"))
+    ap.add_argument(
+        "--strategy",
+        default="retrieval",
+        help="Which strategy's results to score (context is reconstructed for retrieval only)",
+    )
     ap.add_argument("--out", type=Path, default=HERE / "eval" / "answer_metrics.json")
     args = ap.parse_args()
 
@@ -87,7 +92,7 @@ def main() -> int:
     build_nda(work / "nda.pdf")
     docs = {k: load_document(work / f"{k}.pdf") for k in ("msa", "nda")}
     questions = {q["id"]: q for q in json.loads((HERE / "questions.json").read_text())["questions"]}
-    bge = LlamaCppEmbedder(args.models_dir / "bge-small-en-v1.5-q8_0.gguf")
+    bge: LlamaCppEmbedder | None = None  # loaded only if a run used hybrid retrieval
     norm = lambda s: " ".join(s.split())  # noqa: E731
 
     report: dict[str, Any] = {}
@@ -95,10 +100,19 @@ def main() -> int:
         path, _, kind = spec.partition(":")
         kind = kind or "bm25"
         data = json.loads(Path(path).read_text())
-        config = QAConfig(max_parents=3, max_context_chars=12_000, fallbacks=None)
+        # Reproduce the run's own retrieval settings (older results used these local-run values).
+        saved = data.get("qa_config") or {"max_parents": 3, "max_context_chars": 12_000}
+        config = QAConfig(
+            max_parents=saved["max_parents"],
+            max_context_chars=saved["max_context_chars"],
+            fallbacks=None,
+        )
 
         def make(kind: str = kind) -> Any:
+            nonlocal bge
             if kind == "hybrid":
+                if bge is None:
+                    bge = LlamaCppEmbedder(args.models_dir / "bge-small-en-v1.5-q8_0.gguf")
                 return HybridRetriever(
                     BM25Retriever(), EmbeddingRetriever(bge, query_prefix=BGE_QUERY_PREFIX)
                 )
@@ -117,7 +131,7 @@ def main() -> int:
         }
 
         rows = []
-        for r in data["results"]:
+        for r in (x for x in data["results"] if x.get("strategy", "retrieval") == args.strategy):
             q = questions[r["question_id"]]
             ctx = qa[q["doc"]].retrieve(q["question"])
             ctx_ids = {p.id for p in ctx}

@@ -21,7 +21,7 @@ from .conftest import FakeClient, fake_message
 
 
 def make_qa(contract: Document, client: FakeClient, **config: Any) -> DocumentQA:
-    return DocumentQA(contract, config=QAConfig(**config), client=client)  # type: ignore[arg-type]
+    return DocumentQA(contract, config=QAConfig(**config), client=client)
 
 
 def test_retrieval_request_shape(contract: Document) -> None:
@@ -76,7 +76,7 @@ def test_per_call_strategy_override(contract: Document) -> None:
 def test_answer_parsing_and_citations(contract: Document) -> None:
     qa = make_qa(contract, FakeClient(fake_message(cache_read=900, cache_write=0)))
     termination_id = next(p.id for p in qa.chunks.parents if p.page_start == 54)
-    qa.client.messages.responses.append(  # type: ignore[union-attr]
+    qa.client.messages.responses.append(
         fake_message(f"90 days [{termination_id}]; see also [{termination_id}] and [p9999].")
     )
     qa.ask("warm")
@@ -166,7 +166,7 @@ def test_from_text(fake_client: FakeClient) -> None:
 
 async def test_async_ask_and_warm(contract: Document) -> None:
     client = FakeClient(fake_message(cache_write=10), fake_message(), is_async=True)
-    qa = AsyncDocumentQA(contract, client=client)  # type: ignore[arg-type]
+    qa = AsyncDocumentQA(contract, client=client)
     assert (await qa.warm_cache()).cache_creation_input_tokens == 10
     answer = await qa.ask("Termination notice?")
     assert answer.text
@@ -202,7 +202,7 @@ def test_tests_cannot_reach_the_anthropic_api() -> None:
     """Guard: a real client built inside a test points nowhere and has no credentials."""
     import os
 
-    import anthropic
+    anthropic = pytest.importorskip("anthropic")
 
     assert "ANTHROPIC_API_KEY" not in os.environ
     assert "ANTHROPIC_AUTH_TOKEN" not in os.environ

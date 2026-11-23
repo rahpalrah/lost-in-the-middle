@@ -4,11 +4,15 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-import anthropic
-import httpx2  # the HTTP library the anthropic SDK uses
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
+
+# This file tests the optional FastAPI adapter and its mapping of Anthropic SDK errors; it is
+# skipped when those packages are not installed (the default, dependency-free install).
+anthropic = pytest.importorskip("anthropic")
+httpx2 = pytest.importorskip("httpx2")
+fastapi = pytest.importorskip("fastapi")
+FastAPI = fastapi.FastAPI
+TestClient = pytest.importorskip("fastapi.testclient").TestClient
 
 from longdoc import DocumentService, RefusalError
 from longdoc.server import create_app, create_router
@@ -22,8 +26,8 @@ AUTH = {"Authorization": f"Bearer {TOKEN}"}
 
 def build_service(*responses: Any) -> DocumentService:
     return DocumentService(
-        client=FakeClient(*responses),  # type: ignore[arg-type]
-        async_client=FakeClient(*responses, is_async=True),  # type: ignore[arg-type]
+        client=FakeClient(*responses),
+        async_client=FakeClient(*responses, is_async=True),
     )
 
 

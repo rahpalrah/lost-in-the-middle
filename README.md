@@ -33,17 +33,32 @@ including cache reads and writes.
 
 ## Installation
 
+**No third-party packages are required.** The library, CLI, HTTP server, PDF reader and the
+built-in answer engine use only the Python standard library (3.10+), so this works on a locked-down
+machine and answers questions with no API key and no model:
+
 ```bash
-pip install longdoc-qa                # library: text and Markdown
-pip install "longdoc-qa[pdf]"         # + PDF support
-pip install "longdoc-qa[server]"      # + HTTP API (FastAPI, Uvicorn)
-pip install "longdoc-qa[openai]"      # + use OpenAI instead of Claude
-pip install "longdoc-qa[local]"       # + local open-source models (no API key)
-pip install "longdoc-qa[all]"         # everything
+pip install git+https://github.com/rahpalrah/lost-in-the-middle   # not yet on PyPI
+longdoc ask contract.pdf "What is the notice period?"             # built-in engine, $0, offline
+longdoc serve --port 8000                                          # built-in HTTP server
 ```
 
-Requires Python 3.10+. Claude credentials are read by the Anthropic SDK from the
-environment: set `ANTHROPIC_API_KEY`, or run `ant auth login`.
+Optional extras (none are needed for the above):
+
+```bash
+pip install "longdoc-qa[pdf] @ git+https://github.com/rahpalrah/lost-in-the-middle"      # pypdf as an alternative PDF reader
+pip install "longdoc-qa[fastapi] @ git+https://github.com/rahpalrah/lost-in-the-middle"  # FastAPI/Uvicorn instead of the built-in server
+pip install "longdoc-qa[local] @ git+https://github.com/rahpalrah/lost-in-the-middle"    # run a local GGUF model
+```
+
+Claude and OpenAI are called directly over HTTPS by the SDK itself (no vendor SDK needed): set
+`ANTHROPIC_API_KEY`, or `OPENAI_API_KEY` with `--provider openai --model <model>`. With neither,
+the built-in extractive engine answers by quoting the document, with citations, and says so when
+the document does not contain the answer.
+
+> **Status: alpha (0.8).** See [docs/QUALITY_REPORT.md](docs/QUALITY_REPORT.md) for what is and is
+> not verified. The Claude and OpenAI request paths have been tested against local stand-in
+> servers only, never against the live services.
 
 ## Choose your integration
 
@@ -153,9 +168,11 @@ The routes and their schemas appear in your app's OpenAPI docs. See
 Run it next to your system and call it from any language.
 
 ```bash
-export ANTHROPIC_API_KEY=...            # Claude credential (server-side only)
+export ANTHROPIC_API_KEY=...            # optional: without it the built-in engine answers
 export LONGDOC_API_KEY=choose-a-token   # callers must send this as a bearer token
-longdoc serve --store ./longdoc-data --host 0.0.0.0 --port 8000 --workers 4
+longdoc serve --store ./longdoc-data --host 0.0.0.0 --port 8000
+# one process, many threads, standard library only. More processes: run several instances behind
+# a load balancer, or `--framework fastapi --workers 4` (needs the fastapi extra).
 ```
 
 Or with Docker:
@@ -255,7 +272,7 @@ longdoc --env-file .env ask contract.pdf "What is the notice period?" --provider
 
 **Never commit or paste a key.** Step-by-step setup, safe ways to provide the key, spending
 controls and what is and is not verified: [docs/OPENAI.md](docs/OPENAI.md). The adapter has been
-tested with fake clients only, not against the real OpenAI service.
+tested against a local stand-in server only, not against the real OpenAI service.
 
 ## Without an API key: local models
 

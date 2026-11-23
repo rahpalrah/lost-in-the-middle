@@ -4,107 +4,30 @@ Run with any ASGI server, for example::
 
     uvicorn longdoc.server.asgi:app --host 0.0.0.0 --port 8000 --workers 4
 
-Environment variables:
-
-``ANTHROPIC_API_KEY``
-    Credential for Claude (read by the Anthropic SDK).
-``LONGDOC_API_KEY``
-    Bearer token that callers of this API must send. Strongly recommended.
-``LONGDOC_STORE_DIR``
-    Directory for persisted documents. Required for more than one worker, so that
-    workers share documents. Defaults to in-memory storage.
-``LONGDOC_MODEL``, ``LONGDOC_EFFORT``, ``LONGDOC_STRATEGY``, ``LONGDOC_CACHE_TTL``
-    Override :class:`longdoc.QAConfig` defaults.
-``LONGDOC_FALLBACKS``
-    ``default`` (the default) or ``none``.
-``LONGDOC_MAX_UPLOAD_MB``
-    Upload size limit in megabytes (default 25).
-``LONGDOC_PROVIDER``
-    ``anthropic`` (default) or ``openai``. For OpenAI set ``LONGDOC_MODEL`` to a chat model
-    your account can use, and put the key in ``OPENAI_API_KEY`` (never in code).
-``LONGDOC_OPENAI_BASE_URL``
-    Optional: an OpenAI-compatible server instead of api.openai.com.
-``LONGDOC_ENV_FILE``
-    Optional path to a ``.env`` file with ``OPENAI_API_KEY`` and other settings. Real
-    environment variables take precedence over the file.
-``LONGDOC_RATE_LIMIT_PER_MIN``
-    Maximum uploads plus questions per client address per minute (default: unlimited).
-``LONGDOC_LOCAL_MODEL``
-    Path to a GGUF model. When set, answers come from this local model instead of
-    Claude, and no Anthropic API key is needed (requires the ``local`` extra).
-``LONGDOC_LOCAL_CTX``
-    Local model context window in tokens (default 16384).
+Configuration comes from environment variables; see :mod:`longdoc.server.envconfig`.
 """
 
 from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import replace
-from typing import Any
 
 from fastapi import FastAPI
 
-from ..config import QAConfig, Strategy
-from ..env import read_env_file
-from ..exceptions import ConfigurationError
-from ..service import DocumentService
-from ..store import DocumentStore, InMemoryStore, JSONFileStore
 from .app import create_app
+from .envconfig import config_from_env, settings_from_env
 
-
-def config_from_env(env: Mapping[str, str]) -> QAConfig:
-    """Build a :class:`QAConfig` from ``LONGDOC_*`` variables."""
-    kwargs: dict[str, Any] = {}
-    if model := env.get("LONGDOC_MODEL"):
-        kwargs["model"] = model
-    if effort := env.get("LONGDOC_EFFORT"):
-        kwargs["effort"] = effort
-    if strategy := env.get("LONGDOC_STRATEGY"):
-        kwargs["strategy"] = Strategy(strategy)
-    if ttl := env.get("LONGDOC_CACHE_TTL"):
-        kwargs["cache_ttl"] = ttl
-    if (fallbacks := env.get("LONGDOC_FALLBACKS")) is not None:
-        kwargs["fallbacks"] = None if fallbacks.lower() in ("none", "off", "") else fallbacks
-    return QAConfig(**kwargs)
+__all__ = ["app", "app_from_env", "config_from_env"]
 
 
 def app_from_env(env: Mapping[str, str] | None = None) -> FastAPI:
-    """Build the application from environment variables."""
-    env = os.environ if env is None else env
-    if env_file := env.get("LONGDOC_ENV_FILE"):
-        env = {**read_env_file(env_file), **dict(env)}  # real environment variables win
-    store_dir = env.get("LONGDOC_STORE_DIR")
-    store: DocumentStore = JSONFileStore(store_dir) if store_dir else InMemoryStore()
-    config = config_from_env(env)
-    client: Any = None
-    provider = env.get("LONGDOC_PROVIDER", "anthropic").lower()
-    if provider == "openai":
-        from ..openai_client import OpenAIClient
-
-        if not env.get("LONGDOC_MODEL"):
-            raise ConfigurationError("LONGDOC_PROVIDER=openai requires LONGDOC_MODEL.")
-        client = OpenAIClient(
-            api_key=env.get("OPENAI_API_KEY") or None,
-            base_url=env.get("LONGDOC_OPENAI_BASE_URL") or None,
-        )
-        config = replace(config, fallbacks=None)
-    elif provider != "anthropic":
-        raise ConfigurationError(f"Unknown LONGDOC_PROVIDER {provider!r}: use anthropic or openai.")
-    if local_model := env.get("LONGDOC_LOCAL_MODEL"):
-        from ..local import LlamaCppClient
-
-        client = LlamaCppClient(local_model, n_ctx=int(env.get("LONGDOC_LOCAL_CTX", "16384")))
-        config = replace(config, model=client.model_name, fallbacks=None)
-    service = DocumentService(store=store, config=config, client=client)
-    max_mb = float(env.get("LONGDOC_MAX_UPLOAD_MB", "25"))
+    """Build the FastAPI application from environment variables."""
+    settings = settings_from_env(os.environ if env is None else env)
     return create_app(
-        service,
-        api_key=env.get("LONGDOC_API_KEY") or None,
-        max_upload_bytes=int(max_mb * 1024 * 1024),
-        rate_limit_per_minute=int(env["LONGDOC_RATE_LIMIT_PER_MIN"])
-        if env.get("LONGDOC_RATE_LIMIT_PER_MIN")
-        else None,
+        settings.service,
+        api_key=settings.api_key,
+        max_upload_bytes=settings.max_upload_bytes,
+        rate_limit_per_minute=settings.rate_limit_per_minute,
     )
 
 

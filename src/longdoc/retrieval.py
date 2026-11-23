@@ -42,8 +42,8 @@ def stem(token: str) -> str:
             token = token[: -len(suffix)] + keep
             break
     else:
-        if token.endswith("s") and not token.endswith("ss") and len(token) > 4:
-            token = token[:-1]
+        if token.endswith("s") and not token.endswith(("ss", "us", "is")) and len(token) > 3:
+            token = token[:-1]  # plural: laws -> law, fees -> fee, uses -> use
     if token.endswith("e") and len(token) > 4:
         token = token[:-1]
     return token

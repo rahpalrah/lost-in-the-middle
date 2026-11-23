@@ -14,6 +14,7 @@ RUN = Path(__file__).resolve().parent.parent / "benchmarks" / "contract_review" 
 
 @pytest.fixture(scope="module")
 def run_module() -> ModuleType:
+    pytest.importorskip("fpdf")  # the benchmark builds its sample PDFs with fpdf2 (dev extra)
     sys.path.insert(0, str(RUN.parent))
     spec = importlib.util.spec_from_file_location("benchmark_run", RUN)
     assert spec is not None

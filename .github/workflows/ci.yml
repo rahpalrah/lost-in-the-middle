@@ -41,6 +41,24 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest --cov
 
+  zero-deps:
+    # The default install must work with nothing but the standard library.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: pip install pytest pytest-asyncio && pip install --no-deps -e .
+      - run: pip list --format=freeze | grep -v -i "^\(longdoc-qa\|pip\|setuptools\|wheel\|pytest\|pluggy\|iniconfig\|packaging\|pygments\|exceptiongroup\|tomli\|typing_extensions\)" && exit 1 || true
+      - run: pytest -q
+      - run: longdoc --version
+      - name: Answer a question with no key and no packages
+        run: |
+          printf '# 1. Term\n\nThe term is thirty-six (36) months.\n\n# 2. Law\n\nNew York law governs.\n' > c.md
+          longdoc ask c.md "How long is the term?" | tee out.txt
+          grep -q "thirty-six" out.txt
+
   security:
     runs-on: ubuntu-latest
     steps:

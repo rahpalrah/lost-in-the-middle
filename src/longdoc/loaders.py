@@ -1,31 +1,39 @@
 """Load documents from disk or from bytes (for example, an HTTP upload).
 
-Supported: ``.txt``, ``.md``/``.markdown``/``.rst`` and ``.pdf`` (requires the ``pdf``
-extra: ``pip install "longdoc-qa[pdf]"``). For anything else, extract the text
-yourself and use :meth:`Document.from_text` or :meth:`Document.from_pages`.
+Supported: ``.txt``, ``.md``/``.markdown``/``.rst`` and ``.pdf``. PDFs are read by a built-in
+standard-library reader (see :mod:`longdoc.pdf`); if ``pypdf`` is installed
+(``pip install "longdoc-qa[pdf]"``) it is used instead, being more robust on unusual files.
+For anything else, extract the text yourself and use :meth:`Document.from_text` or
+:meth:`Document.from_pages`.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import io
 import os
 import re
 from pathlib import Path, PurePath
-from typing import BinaryIO
+from typing import Literal
 
 from .exceptions import DocumentLoadError, EmptyDocumentError, UnsupportedFormatError
 from .models import Document
+from .pdf import extract_pages
+
+PdfBackend = Literal["auto", "builtin", "pypdf"]
 
 TEXT_SUFFIXES = frozenset({".txt", ".md", ".markdown", ".rst"})
 SUPPORTED_SUFFIXES = TEXT_SUFFIXES | {".pdf"}
 
 
-def load_document(path: str | os.PathLike[str], *, encoding: str = "utf-8") -> Document:
+def load_document(
+    path: str | os.PathLike[str], *, encoding: str = "utf-8", pdf_backend: PdfBackend = "auto"
+) -> Document:
     """Load a document from disk, choosing the reader by file extension.
 
     Raises:
         DocumentLoadError: The file is missing or unreadable.
-        UnsupportedFormatError: The extension is unsupported, or ``pypdf`` is missing.
+        UnsupportedFormatError: The extension is unsupported, or the PDF is encrypted.
         EmptyDocumentError: No text could be extracted.
     """
     p = Path(path)
@@ -35,15 +43,17 @@ def load_document(path: str | os.PathLike[str], *, encoding: str = "utf-8") -> D
         data = p.read_bytes()
     except OSError as exc:
         raise DocumentLoadError(f"Could not read {p}: {exc}") from exc
-    return load_bytes(data, filename=str(p), encoding=encoding)
+    return load_bytes(data, filename=str(p), encoding=encoding, pdf_backend=pdf_backend)
 
 
-def load_bytes(data: bytes, *, filename: str, encoding: str = "utf-8") -> Document:
+def load_bytes(
+    data: bytes, *, filename: str, encoding: str = "utf-8", pdf_backend: PdfBackend = "auto"
+) -> Document:
     """Load a document from raw bytes. ``filename`` selects the reader by extension.
 
     Raises:
         DocumentLoadError: The content cannot be decoded or parsed.
-        UnsupportedFormatError: The extension is unsupported, or ``pypdf`` is missing.
+        UnsupportedFormatError: The extension is unsupported, or the PDF is encrypted.
         EmptyDocumentError: No text could be extracted.
     """
     suffix = PurePath(filename).suffix.lower()
@@ -53,7 +63,7 @@ def load_bytes(data: bytes, *, filename: str, encoding: str = "utf-8") -> Docume
         except UnicodeDecodeError as exc:
             raise DocumentLoadError(f"{filename} is not valid {encoding} text: {exc}") from exc
     elif suffix == ".pdf":
-        doc = _load_pdf(io.BytesIO(data), filename)
+        doc = _load_pdf(data, filename, pdf_backend)
     else:
         raise UnsupportedFormatError(
             f"Unsupported file type {suffix or '(none)'!r}; supported: "
@@ -66,18 +76,65 @@ def load_bytes(data: bytes, *, filename: str, encoding: str = "utf-8") -> Docume
     return doc
 
 
-def _load_pdf(stream: BinaryIO, filename: str) -> Document:
+def _pages_with_pypdf(data: bytes, filename: str) -> list[str]:
+    from pypdf import PdfReader
+
     try:
-        from pypdf import PdfReader
-    except ImportError as exc:
-        raise UnsupportedFormatError(
-            'PDF support needs pypdf: pip install "longdoc-qa[pdf]"'
-        ) from exc
-    try:
-        reader = PdfReader(stream)
-        pages = [page.extract_text() or "" for page in reader.pages]
+        reader = PdfReader(io.BytesIO(data))
+        return [page.extract_text() or "" for page in reader.pages]
     except Exception as exc:  # pypdf raises many unrelated exception types
         raise DocumentLoadError(f"Could not parse PDF {filename}: {exc}") from exc
+
+
+def _pages_with_builtin(data: bytes, filename: str) -> list[str]:
+    try:
+        return extract_pages(data)
+    except UnsupportedFormatError:
+        raise
+    except DocumentLoadError as exc:
+        raise DocumentLoadError(f"{exc} ({filename})") from exc
+
+
+def _has_pypdf() -> bool:
+    return importlib.util.find_spec("pypdf") is not None
+
+
+def _load_pdf(data: bytes, filename: str, backend: PdfBackend = "auto") -> Document:
+    """Read a PDF with the built-in reader, ``pypdf``, or both.
+
+    ``"auto"`` tries ``pypdf`` first when it is installed (more robust on unusual files) and then
+    the built-in standard-library reader, using the first that finds text. Each covers cases the
+    other rejects: ``pypdf`` is strict about file structure, while the built-in reader is lenient
+    about it. ``"builtin"`` and ``"pypdf"`` force one reader.
+    """
+    if backend not in ("auto", "builtin", "pypdf"):
+        raise UnsupportedFormatError(f"Unknown pdf_backend {backend!r}.")
+    if backend in ("auto", "pypdf") and not _has_pypdf():
+        if backend == "pypdf":
+            raise UnsupportedFormatError('pdf_backend="pypdf" needs: pip install "longdoc-qa[pdf]"')
+        readers = [_pages_with_builtin]
+    elif backend == "pypdf":
+        readers = [_pages_with_pypdf]
+    elif backend == "builtin":
+        readers = [_pages_with_builtin]
+    else:
+        readers = [_pages_with_pypdf, _pages_with_builtin]
+
+    first_error: DocumentLoadError | None = None
+    pages: list[str] = []
+    for reader in readers:
+        try:
+            candidate = reader(data, filename)
+        except DocumentLoadError as exc:  # includes encrypted files (UnsupportedFormatError)
+            first_error = first_error or exc
+            continue
+        if any(p.strip() for p in candidate):
+            pages = candidate
+            break
+        pages = pages or candidate  # remember an empty result in case nothing finds text
+    else:
+        if first_error is not None and not pages:
+            raise first_error
     return Document.from_pages(strip_running_headers(pages), source=filename)
 
 

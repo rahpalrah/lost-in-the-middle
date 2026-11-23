@@ -200,6 +200,42 @@ first, and fixed.
    against the section text. This is the most valuable change for trust.
 5. Add a reranking step or a larger embedding model for paraphrase cases like Q13.
 
+## 11. Update for 0.8.0: dependency-free mode, load test
+
+Measured on a 4-core cloud VM, Python 3.13, nothing but the standard library installed.
+
+**Zero dependencies.** In a venv with only pytest: 213 tests pass, 23 skip (they need optional
+packages), and importing every `longdoc` module loads no third-party module. With everything
+installed: 252 pass; ruff and mypy are clean.
+
+**Built-in engine (no model, no key)** on the same 16-question contract benchmark, retrieval
+strategy, BM25: answer accuracy 12/16 (0.75, 95% CI 0.51 to 0.90); 11/13 when the retrieved
+context contained the answer; citation of a needed section 12/15; 0 answers with numbers absent
+from the context; correctly declined 1/1 unanswerable question but answered 2/2 questions whose
+answer was not in the context (it quotes the nearest text rather than refusing). The engine was
+tuned on this same set, so treat 0.75 as optimistic. Run: `python benchmarks/contract_review/run.py --extractive`.
+
+**Load test** (`benchmarks/load_test.py`, built-in server and the client in one process, so the
+client competes for the same Python interpreter lock; 1.1M-character document, built-in engine,
+8 s per level, no errors at any level):
+
+| clients | requests | req/s | p50 ms | p95 ms | p99 ms |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 2597 | 325 | 3.0 | 4.5 | 6.5 |
+| 4 | 2424 | 302 | 12.9 | 20.5 | 25.3 |
+| 16 | 2322 | 289 | 54.6 | 68.4 | 74.8 |
+| 64 | 2380 | 290 | 216 | 249 | 260 |
+
+Throughput is flat at roughly 300 requests/s: the server is CPU-bound in one process, so latency
+grows linearly with concurrency. This measures the service (HTTP, retrieval, locking), not a
+language model; with Claude or OpenAI the model's latency dominates. With `--max-concurrency 1`
+and 64 clients the server answered excess requests with `503 server_busy` (14 of 1416) instead of
+queueing without bound. Not tested: multi-process deployments, long soak runs, slow clients,
+TLS (terminate it at a proxy).
+
+**Still not verified:** the Claude and OpenAI request code against the live services (only local
+stand-in servers), the Docker image build, the Flask and Django examples, Windows and macOS.
+
 ## 10. Reproduce
 
 ```bash

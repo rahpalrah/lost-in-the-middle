@@ -51,8 +51,14 @@ def test_missing_file_is_a_clean_error(tmp_path: Path, capsys: pytest.CaptureFix
     assert "error:" in capsys.readouterr().err
 
 
-def test_serve_needs_store_for_multiple_workers(capsys: pytest.CaptureFixture[str]) -> None:
+def test_builtin_server_is_one_process(capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["serve", "--workers", "2"]) == 1
+    assert "--framework fastapi" in capsys.readouterr().err
+
+
+def test_fastapi_workers_need_a_shared_store(capsys: pytest.CaptureFixture[str]) -> None:
+    pytest.importorskip("uvicorn")
+    assert cli.main(["serve", "--framework", "fastapi", "--workers", "2"]) == 1
     assert "--store" in capsys.readouterr().err
 
 

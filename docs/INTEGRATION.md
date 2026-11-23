@@ -483,7 +483,7 @@ child_overlap_chars=...)`.
 - [ ] The `longdoc` logger captured (`DEBUG`: request IDs and token usage; `WARNING`: truncation and
       missing authentication). Log `answer.request_id` to trace a call in Anthropic support.
 - [ ] Back up the document store, or keep your source files so documents can be re-indexed.
-- [ ] Pin the version (`longdoc-qa==0.7.0`) and read [`CHANGELOG.md`](../CHANGELOG.md) before upgrading.
+- [ ] Pin the version (`longdoc-qa==0.8.0`) and read [`CHANGELOG.md`](../CHANGELOG.md) before upgrading.
 
 ---
 

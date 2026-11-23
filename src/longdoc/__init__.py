@@ -15,14 +15,17 @@ Quick start::
     answer = qa.ask("What is the termination notice period?")
     print(answer.text)
 
-To integrate into an existing system, use :class:`DocumentService` (many documents,
-pluggable storage), mount :func:`longdoc.server.create_router` in a FastAPI app, or
-run the standalone HTTP API with ``longdoc serve``.
+It works out of the box with no API key and no third-party packages: without credentials it
+answers with the built-in extractive engine. To integrate into an existing system, use
+:class:`DocumentService` (many documents, pluggable storage), run the dependency-free HTTP
+API with ``longdoc serve`` (call it with :class:`RemoteClient` or any HTTP client), or mount
+:func:`longdoc.server.create_router` in a FastAPI app.
 """
 
 import logging
 
 from ._version import __version__
+from .anthropic_client import AnthropicClient
 from .chunking import ParentChildChunker
 from .client import AsyncDocumentQA, DocumentQA
 from .config import DEFAULT_MODEL, ChunkingConfig, QAConfig, Strategy
@@ -33,6 +36,17 @@ from .exceptions import (
     LongDocError,
     RefusalError,
     UnsupportedFormatError,
+)
+from .extractive import ExtractiveClient
+from .http import (
+    ProviderAuthError,
+    ProviderBadRequestError,
+    ProviderConnectionError,
+    ProviderError,
+    ProviderPermissionError,
+    ProviderQuotaError,
+    ProviderRateLimitError,
+    ProviderServerError,
 )
 from .loaders import load_bytes, load_document
 from .models import (
@@ -45,6 +59,9 @@ from .models import (
     RetrievalHit,
     TokenUsage,
 )
+from .openai_client import OpenAIClient
+from .providers import make_client
+from .remote import RemoteClient, RemoteError
 from .retrieval import BM25Retriever, EmbeddingRetriever, HybridRetriever, Retriever
 from .serialization import answer_to_dict, chunked_from_dict, chunked_to_dict
 from .service import DocumentInfo, DocumentNotFoundError, DocumentService
@@ -56,6 +73,7 @@ logging.getLogger(__name__).addHandler(logging.NullHandler())
 __all__ = [
     "DEFAULT_MODEL",
     "Answer",
+    "AnthropicClient",
     "AsyncDocumentQA",
     "BM25Retriever",
     "ChildChunk",
@@ -71,15 +89,27 @@ __all__ = [
     "DocumentStore",
     "EmbeddingRetriever",
     "EmptyDocumentError",
+    "ExtractiveClient",
     "HybridRetriever",
     "InMemoryStore",
     "JSONFileStore",
     "LongDocError",
+    "OpenAIClient",
     "Page",
     "ParentChildChunker",
     "ParentChunk",
+    "ProviderAuthError",
+    "ProviderBadRequestError",
+    "ProviderConnectionError",
+    "ProviderError",
+    "ProviderPermissionError",
+    "ProviderQuotaError",
+    "ProviderRateLimitError",
+    "ProviderServerError",
     "QAConfig",
     "RefusalError",
+    "RemoteClient",
+    "RemoteError",
     "RetrievalHit",
     "Retriever",
     "Strategy",
@@ -91,4 +121,5 @@ __all__ = [
     "chunked_to_dict",
     "load_bytes",
     "load_document",
+    "make_client",
 ]

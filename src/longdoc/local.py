@@ -58,6 +58,14 @@ class LocalTextBlock:
 
 
 @dataclass(frozen=True, slots=True)
+class LocalBlock:
+    """A non-text content block (for example a server-side ``fallback`` marker)."""
+
+    type: str
+    text: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class LocalUsage:
     """Token usage. Local models have no billed prompt cache, so cache fields are 0."""
 
@@ -65,7 +73,7 @@ class LocalUsage:
     output_tokens: int
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens: int = 0
-    iterations: None = None
+    iterations: list[Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +88,7 @@ class LocalStopDetails:
 class LocalMessage:
     """A completed local-model response."""
 
-    content: list[LocalTextBlock]
+    content: list[Any]
     model: str
     stop_reason: str
     usage: LocalUsage
@@ -197,6 +205,10 @@ class LlamaCppClient:
         self._lock = threading.Lock()
         self.beta = _Beta(messages=_Messages(self))
         self.messages = self.beta.messages
+
+    def to_async(self) -> AsyncLlamaCppClient:
+        """An async view that shares this loaded model."""
+        return AsyncLlamaCppClient(self)
 
     def count_tokens(self, chat: list[dict[str, str]]) -> int:
         """Approximate prompt tokens for ``chat`` (chat-template overhead excluded)."""

@@ -1,26 +1,46 @@
-"""HTTP API for longdoc (requires the ``server`` extra: ``pip install "longdoc-qa[server]"``).
+"""HTTP serving for longdoc.
 
-Two ways to use it:
+* **Standalone service, no dependencies** (any language can call it)::
 
-* **Mount into your existing FastAPI app**::
+      longdoc serve --store ./data --port 8000
+
+  or ``from longdoc.server import create_server``. It uses only the standard library.
+
+* **Mount into your existing FastAPI app** (optional; needs ``pip install "longdoc-qa[fastapi]"``)::
 
       from longdoc.server import create_router
       app.include_router(create_router(service), prefix="/longdoc")
-
-* **Run as a standalone service** (any language can call it; OpenAPI docs at ``/docs``)::
-
-      longdoc serve --store ./data --port 8000
 """
 
 from __future__ import annotations
 
-try:
-    import fastapi  # noqa: F401
-except ImportError as exc:  # pragma: no cover - exercised only without the extra
-    raise ImportError(
-        'The HTTP server needs extra dependencies: pip install "longdoc-qa[server]"'
-    ) from exc
+from typing import Any
 
-from .app import create_app, create_router
+from ..api import LongDocApi
+from .envconfig import Settings, config_from_env, settings_from_env
+from .stdlib import LongDocServer, create_server, serve
 
-__all__ = ["create_app", "create_router"]
+__all__ = [
+    "LongDocApi",
+    "LongDocServer",
+    "Settings",
+    "config_from_env",
+    "create_app",
+    "create_router",
+    "create_server",
+    "serve",
+    "settings_from_env",
+]
+
+
+def __getattr__(name: str) -> Any:
+    """Load the optional FastAPI integration only when it is asked for."""
+    if name in ("create_app", "create_router"):
+        try:
+            from . import app
+        except ImportError as exc:
+            raise ImportError(
+                'The FastAPI integration needs FastAPI: pip install "longdoc-qa[fastapi]"'
+            ) from exc
+        return getattr(app, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

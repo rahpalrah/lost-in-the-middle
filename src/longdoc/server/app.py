@@ -6,34 +6,28 @@
 import logging
 import os
 import secrets
-import threading
-import time
-from collections import deque
 from typing import Annotated, Any
 
-import anthropic
 from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
 from .._version import __version__
-from ..config import Strategy
-from ..exceptions import (
-    ConfigurationError,
-    DocumentLoadError,
-    EmptyDocumentError,
-    LongDocError,
-    RefusalError,
-    UnsupportedFormatError,
+from ..api import (
+    API_KEY_ENV,
+    DEFAULT_MAX_UPLOAD_BYTES,
+    ApiError,
+    RateLimiter,
+    map_exception,
 )
+from ..config import Strategy
 from ..serialization import answer_to_dict, section_to_dict
 from ..service import DocumentNotFoundError, DocumentService
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
-API_KEY_ENV = "LONGDOC_API_KEY"
+__all__ = ["RateLimiter", "create_app", "create_router", "to_http_error"]
 
 
 # -- schemas --------------------------------------------------------------------------
@@ -140,110 +134,17 @@ def _error(
     return HTTPException(status_code=status, detail=body, headers=headers)
 
 
-class RateLimiter:
-    """Sliding-window limiter: at most ``per_minute`` calls per caller in any 60 seconds.
-
-    In-memory and per process, so with N workers the effective limit is up to N times
-    higher. For a hard global limit, also enforce one at your gateway or load balancer.
-    """
-
-    def __init__(self, per_minute: int, *, window: float = 60.0) -> None:
-        self.per_minute = per_minute
-        self.window = window
-        self._calls: dict[str, deque[float]] = {}
-        self._lock = threading.Lock()
-
-    def check(self, key: str, now: float | None = None) -> int | None:
-        """Record a call. Returns ``None`` if allowed, else seconds until it would be."""
-        now = time.monotonic() if now is None else now
-        with self._lock:
-            if len(self._calls) > 10_000:  # bound memory: drop callers with no recent calls
-                self._calls = {
-                    k: q for k, q in self._calls.items() if q and now - q[-1] < self.window
-                }
-            q = self._calls.setdefault(key, deque())
-            while q and now - q[0] >= self.window:
-                q.popleft()
-            if len(q) >= self.per_minute:
-                return max(1, int(self.window - (now - q[0])) + 1)
-            q.append(now)
-            return None
-
-
 def to_http_error(exc: Exception) -> HTTPException:
-    """Translate library and Anthropic SDK errors into HTTP errors.
+    """Translate library and provider errors into HTTP errors (shared with the stdlib server).
 
-    Upstream error messages are logged, not returned, so internal details (such as
-    credential problems) never leak to API callers.
+    Provider messages are never returned to callers: they can contain fragments of API keys.
     """
-    if isinstance(exc, DocumentNotFoundError):
-        return _error(404, "not_found", str(exc))
-    if isinstance(exc, RefusalError):
-        return _error(422, "refused", str(exc), category=exc.category, request_id=exc.request_id)
-    if isinstance(exc, UnsupportedFormatError):
-        return _error(415, "unsupported_format", str(exc))
-    if isinstance(exc, (EmptyDocumentError, DocumentLoadError, ConfigurationError)):
-        return _error(
-            422,
-            "invalid_document" if isinstance(exc, DocumentLoadError) else "invalid_request",
-            str(exc),
-        )
-    if isinstance(exc, anthropic.RateLimitError):
-        return _error(429, "rate_limited", "The model provider is rate limiting requests.")
-    if isinstance(exc, anthropic.APIStatusError):
-        logger.error("Anthropic API error %s: %s", exc.status_code, exc.message)
-        return _error(
-            502,
-            "upstream_error",
-            "The model provider returned an error.",
-            upstream_status=exc.status_code,
-            request_id=exc.request_id,
-        )
-    if isinstance(exc, anthropic.APIConnectionError):
-        logger.error("Could not reach the Anthropic API: %s", exc)
-        return _error(503, "upstream_unavailable", "The model provider could not be reached.")
-    mapped = _openai_error(exc)
-    if mapped is not None:
-        return mapped
-    if isinstance(exc, LongDocError):
-        return _error(400, "bad_request", str(exc))
-    raise exc
-
-
-def _openai_error(exc: Exception) -> HTTPException | None:
-    """Map OpenAI SDK errors (only if the optional package is installed)."""
-    try:
-        import openai
-    except ImportError:
-        return None
-    from ..openai_client import is_out_of_credit
-
-    if isinstance(exc, openai.RateLimitError):
-        if is_out_of_credit(exc):
-            # Same HTTP 429 as rate limiting, but retrying will never help: report it clearly
-            # as an upstream account problem so clients do not retry in a loop.
-            logger.error("OpenAI account has no remaining credit or quota")
-            return _error(
-                502,
-                "upstream_quota_exceeded",
-                "The model provider account has no remaining credit. Add billing credit; "
-                "retrying will not help.",
-            )
-        return _error(429, "rate_limited", "The model provider is rate limiting requests.")
-    if isinstance(exc, openai.APIStatusError):
-        # Includes authentication errors: report an upstream problem, never the details.
-        logger.error("OpenAI API error %s", exc.status_code)
-        return _error(
-            502,
-            "upstream_error",
-            "The model provider returned an error.",
-            upstream_status=exc.status_code,
-            request_id=getattr(exc, "request_id", None),
-        )
-    if isinstance(exc, openai.APIConnectionError):
-        logger.error("Could not reach the OpenAI API")
-        return _error(503, "upstream_unavailable", "The model provider could not be reached.")
-    return None
+    err: ApiError = map_exception(exc)
+    return HTTPException(
+        status_code=err.status,
+        detail={"error": err.code, "message": err.message, "details": err.details},
+        headers=err.headers or None,
+    )
 
 
 # -- router ---------------------------------------------------------------------------

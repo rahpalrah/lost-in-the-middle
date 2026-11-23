@@ -10,22 +10,17 @@ import logging
 import os
 import threading
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-import anthropic
-
+from .aio import AsyncAdapter
 from .chunking import ParentChildChunker
 from .config import ChunkingConfig, QAConfig, Strategy
 from .exceptions import ConfigurationError, RefusalError
 from .loaders import load_document
-from .local import AsyncLlamaCppClient, LlamaCppClient, LocalMessage
 from .models import Answer, ChunkedDocument, Document, ParentChunk, TokenUsage
-from .openai_client import AsyncOpenAIClient, OpenAIClient
 from .prompts import SYSTEM_PROMPT, clean_answer, extract_citations, system_blocks, user_message
+from .providers import make_client
 from .retrieval import BM25Retriever, Retriever, select_parents
-
-if TYPE_CHECKING:
-    from anthropic.types.beta import BetaMessage
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +123,7 @@ class _QACore:
 
     # -- response parsing ----------------------------------------------------------
 
-    def record_usage(self, message: BetaMessage | LocalMessage) -> TokenUsage:
+    def record_usage(self, message: Any) -> TokenUsage:
         u = message.usage
         usage = TokenUsage(
             input_tokens=u.input_tokens,
@@ -146,9 +141,7 @@ class _QACore:
         )
         return usage
 
-    def to_answer(
-        self, message: BetaMessage | LocalMessage, context: Sequence[ParentChunk]
-    ) -> Answer:
+    def to_answer(self, message: Any, context: Sequence[ParentChunk]) -> Answer:
         usage = self.record_usage(message)
         request_id = getattr(message, "_request_id", None)
 
@@ -189,11 +182,13 @@ class DocumentQA(_QACore):
         config: Question-answering settings.
         chunking: Chunk sizes (ignored if ``document`` is already chunked).
         retriever: Custom search backend. Defaults to :class:`BM25Retriever`.
-        client: A configured ``anthropic.Anthropic`` client, or a
-            :class:`longdoc.local.LlamaCppClient` (local model) or
-            :class:`longdoc.openai_client.OpenAIClient` (OpenAI). Defaults to an
-            Anthropic client that reads credentials from the environment
-            (``ANTHROPIC_API_KEY`` and friends).
+        client: Any object with ``beta.messages.stream(...)``: one of this package's clients
+            (:class:`~longdoc.anthropic_client.AnthropicClient`,
+            :class:`~longdoc.openai_client.OpenAIClient`,
+            :class:`~longdoc.local.LlamaCppClient`,
+            :class:`~longdoc.extractive.ExtractiveClient`) or an official ``anthropic.Anthropic``.
+            Defaults to Claude if ``ANTHROPIC_API_KEY`` is set, otherwise the built-in
+            extractive engine (no key or model needed).
 
     Example:
         >>> qa = DocumentQA.from_file("contract.pdf")            # doctest: +SKIP
@@ -208,12 +203,10 @@ class DocumentQA(_QACore):
         config: QAConfig | None = None,
         chunking: ChunkingConfig | None = None,
         retriever: Retriever | None = None,
-        client: anthropic.Anthropic | LlamaCppClient | OpenAIClient | None = None,
+        client: Any = None,
     ) -> None:
         super().__init__(document, config=config, chunking=chunking, retriever=retriever)
-        self.client: anthropic.Anthropic | LlamaCppClient | OpenAIClient = (
-            client or anthropic.Anthropic()
-        )
+        self.client: Any = client if client is not None else make_client("auto")
 
     @classmethod
     def from_file(cls, path: str | os.PathLike[str], **kwargs: Any) -> DocumentQA:
@@ -230,7 +223,8 @@ class DocumentQA(_QACore):
 
         Raises:
             RefusalError: The model (and any fallback) declined to answer.
-            anthropic.APIError: Any API failure, after the SDK's automatic retries.
+            ProviderError: The model provider failed (bad key, no credit, rate limit, outage),
+                after automatic retries. See :mod:`longdoc.http`.
         """
         kwargs, context = self.build_request(question, strategy)
         with self.client.beta.messages.stream(**kwargs) as stream:
@@ -248,7 +242,12 @@ class DocumentQA(_QACore):
 
 
 class AsyncDocumentQA(_QACore):
-    """Async version of :class:`DocumentQA`; takes an ``anthropic.AsyncAnthropic``."""
+    """Async version of :class:`DocumentQA`.
+
+    ``client`` is any object with an async ``beta.messages.stream(...)``: build one from a
+    synchronous client with ``client.to_async()`` (or :class:`longdoc.aio.AsyncAdapter`), or pass
+    an official ``anthropic.AsyncAnthropic``. Defaults like :class:`DocumentQA`.
+    """
 
     def __init__(
         self,
@@ -257,12 +256,10 @@ class AsyncDocumentQA(_QACore):
         config: QAConfig | None = None,
         chunking: ChunkingConfig | None = None,
         retriever: Retriever | None = None,
-        client: anthropic.AsyncAnthropic | AsyncLlamaCppClient | AsyncOpenAIClient | None = None,
+        client: Any = None,
     ) -> None:
         super().__init__(document, config=config, chunking=chunking, retriever=retriever)
-        self.client: anthropic.AsyncAnthropic | AsyncLlamaCppClient | AsyncOpenAIClient = (
-            client or anthropic.AsyncAnthropic()
-        )
+        self.client: Any = client if client is not None else AsyncAdapter(make_client("auto"))
 
     @classmethod
     def from_file(cls, path: str | os.PathLike[str], **kwargs: Any) -> AsyncDocumentQA:

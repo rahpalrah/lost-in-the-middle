@@ -23,16 +23,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-import anthropic
-
+from .aio import AsyncAdapter
 from .chunking import ParentChildChunker
 from .client import AsyncDocumentQA, DocumentQA
 from .config import ChunkingConfig, QAConfig, Strategy
 from .exceptions import LongDocError
 from .loaders import load_bytes, load_document
-from .local import AsyncLlamaCppClient, LlamaCppClient
 from .models import Answer, ChunkedDocument, Document, ParentChunk, TokenUsage
-from .openai_client import AsyncOpenAIClient, OpenAIClient
+from .providers import make_client
 from .retrieval import BM25Retriever, Retriever
 from .store import DocumentStore, InMemoryStore, validate_document_id
 
@@ -101,10 +99,8 @@ class DocumentService:
         store: DocumentStore | None = None,
         config: QAConfig | None = None,
         chunking: ChunkingConfig | None = None,
-        client: anthropic.Anthropic | LlamaCppClient | OpenAIClient | None = None,
-        async_client: (
-            anthropic.AsyncAnthropic | AsyncLlamaCppClient | AsyncOpenAIClient | None
-        ) = None,
+        client: Any = None,
+        async_client: Any = None,
         retriever_factory: Callable[[], Retriever] = BM25Retriever,
         max_cached_documents: int = 64,
     ) -> None:
@@ -113,9 +109,6 @@ class DocumentService:
         self.chunker = ParentChildChunker(chunking)
         self._client = client
         self._async_client = async_client
-        if isinstance(client, LlamaCppClient) and async_client is None:
-            # Share the loaded model rather than loading a second copy.
-            self._async_client = AsyncLlamaCppClient(client)
         self._retriever_factory = retriever_factory
         self._max_cached = max(1, max_cached_documents)
         self._sync_qa: OrderedDict[str, DocumentQA] = OrderedDict()
@@ -126,24 +119,21 @@ class DocumentService:
     # -- clients ---------------------------------------------------------------------
 
     @property
-    def client(self) -> anthropic.Anthropic | LlamaCppClient | OpenAIClient:
-        """The shared sync client (created on first use)."""
+    def client(self) -> Any:
+        """The shared sync client (created on first use: Claude if a key is set, else built-in)."""
         with self._lock:
             if self._client is None:
-                self._client = anthropic.Anthropic()
+                self._client = make_client("auto")
             return self._client
 
     @property
-    def async_client(self) -> anthropic.AsyncAnthropic | AsyncLlamaCppClient | AsyncOpenAIClient:
-        """The shared async client (created on first use)."""
+    def async_client(self) -> Any:
+        """The shared async client: an async view of the sync client (one model, one HTTP stack)."""
         with self._lock:
             if self._async_client is None:
-                if isinstance(self._client, LlamaCppClient):
-                    self._async_client = AsyncLlamaCppClient(self._client)
-                elif isinstance(self._client, OpenAIClient):
-                    self._async_client = self._client.to_async()
-                else:
-                    self._async_client = anthropic.AsyncAnthropic()
+                sync = self.client
+                to_async = getattr(sync, "to_async", None)
+                self._async_client = to_async() if callable(to_async) else AsyncAdapter(sync)
             return self._async_client
 
     # -- documents -------------------------------------------------------------------

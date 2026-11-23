@@ -6,6 +6,30 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-23
+
+### Changed
+
+- **No required dependencies.** `pip install` pulls in nothing; the Anthropic and OpenAI SDKs,
+  FastAPI and pypdf are no longer needed. CI has a `zero-deps` job that runs the tests and the CLI
+  with only the standard library installed.
+- The default HTTP server is now built on the standard library (`ThreadingHTTPServer`) with
+  concurrency cap (503), per-client rate limit, security headers, request IDs and graceful
+  SIGTERM. FastAPI remains available via the `fastapi` extra (`--framework fastapi`).
+- `longdoc ask` and `DocumentQA()` work with no key: provider `auto` uses Claude when
+  `ANTHROPIC_API_KEY` is set, else the built-in engine.
+
+### Added
+
+- Direct stdlib HTTPS clients for Claude (`AnthropicClient`) and OpenAI (`OpenAIClient`) with
+  retries, typed errors and a `Secret` wrapper that keeps keys out of logs and reprs.
+- Built-in extractive answer engine (`ExtractiveClient`): verbatim quotes, citations, abstains when
+  topical words are absent from the document.
+- Built-in PDF reader (`longdoc.pdf`), used when pypdf is not installed or fails.
+- `RemoteClient`, a stdlib Python client for the HTTP API.
+- `benchmarks/load_test.py`, a stdlib load test (self-hosted or `--url`).
+- Benchmark `--extractive` mode and `eval_answers.py --strategy`.
+
 ## [0.7.0] - 2026-11-23
 
 ### Added

@@ -65,7 +65,14 @@ def test_stem_groups_word_forms(words: list[str]) -> None:
 def test_stem_leaves_short_words_and_numbers() -> None:
     from longdoc.retrieval import stem
 
-    assert [stem(w) for w in ["fee", "law", "2026", "uses"]] == ["fee", "law", "2026", "uses"]
+    assert [stem(w) for w in ["fee", "law", "2026", "gas"]] == ["fee", "law", "2026", "gas"]
+    assert [stem(w) for w in ["laws", "fees", "uses", "class", "status"]] == [
+        "law",
+        "fee",
+        "use",
+        "class",
+        "status",
+    ]
 
 
 def test_headings_are_searchable() -> None:

@@ -34,21 +34,15 @@ import argparse
 import json
 import os
 import re
-import socket
 import statistics
 import sys
 import tempfile
-import threading
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-
-import anthropic
-import httpx
-import uvicorn
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -65,7 +59,8 @@ from longdoc import (  # noqa: E402
     QAConfig,
     load_document,
 )
-from longdoc.server import create_app  # noqa: E402
+from longdoc.remote import RemoteClient, RemoteError  # noqa: E402
+from longdoc.server import create_server  # noqa: E402
 
 MODEL = "claude-opus-5-5"
 EFFORT = "medium"
@@ -189,40 +184,19 @@ class FakeAnthropic:
 # -- server ----------------------------------------------------------------------------
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
-
-
 class ServerThread:
-    """Runs the real longdoc HTTP API on a local port, as a separate service would."""
+    """Runs the real longdoc HTTP API (the built-in server) on a local port."""
 
     def __init__(self, service: DocumentService) -> None:
-        self.port = _free_port()
-        config = uvicorn.Config(
-            create_app(service, api_key=API_TOKEN),
-            host="127.0.0.1",
-            port=self.port,
-            log_level="warning",
-        )
-        self.server = uvicorn.Server(config)
-        self.thread = threading.Thread(target=self.server.run, daemon=True)
+        self.server = create_server(service, port=0, api_key=API_TOKEN, max_concurrency=8)
 
     def __enter__(self) -> str:
-        self.thread.start()
-        url = f"http://127.0.0.1:{self.port}"
-        for _ in range(100):
-            try:
-                if httpx.get(f"{url}/health", timeout=1).status_code == 200:
-                    return url
-            except httpx.HTTPError:
-                time.sleep(0.05)
-        raise RuntimeError("longdoc server did not start")
+        self.server.start_in_thread()
+        return self.server.url
 
     def __exit__(self, *exc: object) -> None:
-        self.server.should_exit = True
-        self.thread.join(timeout=10)
+        self.server.shutdown()
+        self.server.server_close()
 
 
 # -- grading ---------------------------------------------------------------------------
@@ -271,7 +245,7 @@ def fact_sections(pdf: Path) -> dict[str, set[str]]:
 
 
 def run_sdk_strategy(
-    http: httpx.Client,
+    remote: RemoteClient,
     strategy: str,
     questions: list[dict[str, Any]],
     doc_ids: dict[str, str],
@@ -283,14 +257,11 @@ def run_sdk_strategy(
     for q in questions:
         budget.check(estimate)
         start = time.perf_counter()
-        r = http.post(
-            f"/v1/documents/{doc_ids[q['doc']]}/ask",
-            json={"question": q["question"], "strategy": strategy},
-        )
+        try:
+            body = remote.ask(doc_ids[q["doc"]], q["question"], strategy=strategy)
+        except RemoteError as exc:
+            raise RuntimeError(f"{q['id']} {strategy}: {exc}") from exc
         latency = time.perf_counter() - start
-        if r.status_code != 200:
-            raise RuntimeError(f"{q['id']} {strategy}: HTTP {r.status_code} {r.text[:300]}")
-        body = r.json()
         usage = {
             k: body["usage"][k]
             for k in (
@@ -449,6 +420,14 @@ def write_report(
     skipped: dict[str, str] | None = None,
 ) -> Path:
     lines = [f"# Contract-review benchmark ({mode})", ""]
+    if mode == "extractive":
+        lines += [
+            "> **Built-in extractive engine.** Answers are verbatim quoted passages chosen by word "
+            "matching: no model, no API key, cost $0. It cannot reason, paraphrase or do "
+            "arithmetic, so questions whose answer needs that, or whose wording shares no words "
+            "with the clause, fail by design. Prompt-token and cost figures do not apply.",
+            "",
+        ]
     if mode == "local":
         lines += [
             f"> **Local model run.** Answers come from `{model_label}` running on this "
@@ -500,7 +479,7 @@ def write_report(
         lines += ["", "## Not run", ""]
         lines += [f"- **{k}**: {why}" for k, why in skipped.items()]
     failures = [r for r in results if not r.correct]
-    if failures and mode in ("live", "openai", "local"):
+    if failures and mode in ("live", "openai", "local", "extractive"):
         lines += ["", "## Failures", ""]
         for r in failures:
             lines += [
@@ -526,6 +505,11 @@ def main(argv: list[str] | None = None) -> int:
         "--openai",
         metavar="MODEL",
         help="Real OpenAI calls with YOUR key (costs money; needs --price-in/--price-out)",
+    )
+    mode.add_argument(
+        "--extractive",
+        action="store_true",
+        help="Built-in engine that quotes passages: no model, no key, no cost, runs in seconds",
     )
     mode.add_argument(
         "--local", type=Path, metavar="MODEL.gguf", help="Local GGUF model; no API key, no cost"
@@ -617,12 +601,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     # The naive baseline pastes raw extracted text, as a team without longdoc would.
-    from pypdf import PdfReader
+    from longdoc.pdf import extract_pages
 
-    raw = {
-        k: "\n".join(pg.extract_text() or "" for pg in PdfReader(str(p)).pages)
-        for k, p in pdfs.items()
-    }
+    raw = {k: "\n".join(extract_pages(p.read_bytes())) for k, p in pdfs.items()}
     pack = load_document(pdfs["msa"])
     pack_info = {
         "pages": len(pack.pages),
@@ -633,13 +614,23 @@ def main(argv: list[str] | None = None) -> int:
     global BILLED, MODEL, PRICE_INPUT, PRICE_OUTPUT, PRICE_CACHE_READ, PRICE_CACHE_WRITE_5M
     global NAIVE_MAX_TOKENS
     run_mode = (
-        "live" if args.live else "openai" if args.openai else "local" if args.local else "offline"
+        "live"
+        if args.live
+        else "openai"
+        if args.openai
+        else "local"
+        if args.local
+        else "extractive"
+        if args.extractive
+        else "offline"
     )
     model_label = MODEL
     config = QAConfig(model=MODEL, effort=EFFORT)
     if args.live:
-        sync_client: Any = anthropic.Anthropic()
-        async_client: Any = anthropic.AsyncAnthropic()
+        from longdoc.anthropic_client import AnthropicClient
+
+        sync_client: Any = AnthropicClient()
+        async_client: Any = sync_client.to_async()
     elif args.openai:
         from longdoc.openai_client import OpenAIClient
 
@@ -671,6 +662,14 @@ def main(argv: list[str] | None = None) -> int:
             max_context_chars=12_000,
             fallbacks=None,
         )
+    elif args.extractive:
+        from longdoc.extractive import ExtractiveClient
+
+        sync_client = ExtractiveClient()
+        async_client = sync_client.to_async()
+        model_label = sync_client.model_name
+        BILLED = False
+        config = QAConfig(model=model_label, fallbacks=None)
     else:
         sync_client, async_client = FakeAnthropic(), FakeAnthropic(is_async=True)
 
@@ -710,29 +709,26 @@ def main(argv: list[str] | None = None) -> int:
     results: list[Result] = []
     print(f"Contract pack: {pack_info}")
     try:
-        with (
-            ServerThread(service) as url,
-            httpx.Client(
-                base_url=url,
-                headers={"Authorization": f"Bearer {API_TOKEN}"},
-                # A cold 45k-token read on a CPU takes well over 10 minutes.
-                timeout=7200 if args.local else 600,
-            ) as http,
-        ):
+        with ServerThread(service) as url:
+            # A cold 45k-token read on a CPU takes well over 10 minutes.
+            remote = RemoteClient(
+                url, api_key=API_TOKEN, timeout=7200 if args.local else 600, max_retries=0
+            )
             doc_ids = {}
             for key, path in pdfs.items():
-                with path.open("rb") as fh:
-                    r = http.post(
-                        "/v1/documents",
-                        files={"file": (path.name, fh, "application/pdf")},
-                        data={"id": f"bench-{key}"},
-                    )
-                r.raise_for_status()
-                doc_ids[key] = r.json()["id"]
-                print(f"Uploaded {path.name}: {r.json()}")
+                info = remote.upload(path, document_id=f"bench-{key}")
+                doc_ids[key] = info["id"]
+                print(f"Uploaded {path.name}: {info}")
             for strategy in strategies:
                 print(f"\n== {strategy} ==")
                 needs_whole_doc = strategy in ("cached_document", "naive")
+                if args.extractive and strategy == "naive":
+                    skipped[strategy] = (
+                        "pastes the raw document into a prompt for a language model; the "
+                        "built-in engine has no model to read it."
+                    )
+                    print(f"  skipped: {skipped[strategy]}")
+                    continue
                 if args.local and needs_whole_doc:
                     # Use the model's own tokenizer: the chars/4 estimate is ~15% high here.
                     doc_tokens = whole_doc_tokens(sync_client, service, raw, strategy, doc_ids)
@@ -754,7 +750,7 @@ def main(argv: list[str] | None = None) -> int:
                     results += run_naive(sync_client, subset, raw, budget, est["naive"])
                 else:
                     results += run_sdk_strategy(
-                        http, strategy, questions, doc_ids, truth, budget, est[strategy]
+                        remote, strategy, questions, doc_ids, truth, budget, est[strategy]
                     )
     except BudgetExceeded as exc:
         print(f"\n{exc}")
@@ -772,6 +768,10 @@ def main(argv: list[str] | None = None) -> int:
                 "mode": run_mode,
                 "model": model_label,
                 "skipped": skipped,
+                "qa_config": {
+                    "max_parents": config.max_parents,
+                    "max_context_chars": config.max_context_chars,
+                },
                 "effort": EFFORT,
                 "pack": pack_info,
                 "summary": summary,
@@ -785,8 +785,8 @@ def main(argv: list[str] | None = None) -> int:
     report = write_report(
         out_dir, run_mode, summary, results, questions, pack_info, model_label, skipped
     )
-    if args.local:
-        print("\nCost: $0 (local model).")
+    if args.local or args.extractive:
+        print("\nCost: $0.")
     elif billed_run:
         print(f"\nTotal spent: ${budget.spent:.2f}")
     else:

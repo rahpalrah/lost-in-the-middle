@@ -93,8 +93,8 @@ def test_json_store_leaves_no_temp_files(tmp_path: Path, contract: Document) -> 
 def make_service(*responses: Any, store: DocumentStore | None = None) -> DocumentService:
     return DocumentService(
         store=store,
-        client=FakeClient(*responses),  # type: ignore[arg-type]
-        async_client=FakeClient(*responses, is_async=True),  # type: ignore[arg-type]
+        client=FakeClient(*responses),
+        async_client=FakeClient(*responses, is_async=True),
         max_cached_documents=2,
     )
 
