@@ -196,3 +196,19 @@ def test_citations_accept_bare_and_bracketed_ids(contract: Document) -> None:
     chunked = ParentChildChunker().chunk(contract)
     text = "See section p0002 and [p0001-c003]; also p9999 (invented) and xp0003."
     assert [p.id for p in extract_citations(text, chunked)] == ["p0002", "p0001"]
+
+
+def test_tests_cannot_reach_the_anthropic_api() -> None:
+    """Guard: a real client built inside a test points nowhere and has no credentials."""
+    import os
+
+    import anthropic
+
+    assert "ANTHROPIC_API_KEY" not in os.environ
+    assert "ANTHROPIC_AUTH_TOKEN" not in os.environ
+    client = anthropic.Anthropic(api_key="not-a-real-key", max_retries=0)
+    assert str(client.base_url).startswith("http://127.0.0.1:9")
+    with pytest.raises(anthropic.APIConnectionError):
+        client.messages.create(
+            model="claude-opus-5-5", max_tokens=1, messages=[{"role": "user", "content": "hi"}]
+        )

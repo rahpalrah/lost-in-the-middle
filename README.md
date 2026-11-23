@@ -47,7 +47,8 @@ environment: set `ANTHROPIC_API_KEY`, or run `ant auth login`.
 ## Choose your integration
 
 > **Step-by-step instructions for your own systems, applications and architecture are in the
-> [Integration guide](docs/INTEGRATION.md).**
+> [Integration guide](docs/INTEGRATION.md).** Measured quality, security checks and known
+> gaps are in the [Quality report](docs/QUALITY_REPORT.md).
 
 | You have... | Use | Section |
 |---|---|---|

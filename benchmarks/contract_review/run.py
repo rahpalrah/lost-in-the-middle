@@ -544,6 +544,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=HERE / "results")
     args = parser.parse_args(argv)
 
+    if args.live and os.environ.get("LONGDOC_ALLOW_LIVE_API") != "1":
+        print(
+            "error: --live makes billed Anthropic API calls. Set LONGDOC_ALLOW_LIVE_API=1 to "
+            "confirm you intend that. Use --local or --offline for free runs.",
+            file=sys.stderr,
+        )
+        return 1
     if args.live and not os.environ.get("ANTHROPIC_API_KEY"):
         print("error: --live needs ANTHROPIC_API_KEY in the environment", file=sys.stderr)
         return 1

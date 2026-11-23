@@ -6,6 +6,9 @@
 import logging
 import os
 import secrets
+import threading
+import time
+from collections import deque
 from typing import Annotated, Any
 
 import anthropic
@@ -125,9 +128,46 @@ class ErrorResponse(BaseModel):
 # -- error mapping --------------------------------------------------------------------
 
 
-def _error(status: int, code: str, message: str, **details: Any) -> HTTPException:
+def _error(
+    status: int,
+    code: str,
+    message: str,
+    *,
+    headers: dict[str, str] | None = None,
+    **details: Any,
+) -> HTTPException:
     body = {"error": code, "message": message, "details": details or None}
-    return HTTPException(status_code=status, detail=body)
+    return HTTPException(status_code=status, detail=body, headers=headers)
+
+
+class RateLimiter:
+    """Sliding-window limiter: at most ``per_minute`` calls per caller in any 60 seconds.
+
+    In-memory and per process, so with N workers the effective limit is up to N times
+    higher. For a hard global limit, also enforce one at your gateway or load balancer.
+    """
+
+    def __init__(self, per_minute: int, *, window: float = 60.0) -> None:
+        self.per_minute = per_minute
+        self.window = window
+        self._calls: dict[str, deque[float]] = {}
+        self._lock = threading.Lock()
+
+    def check(self, key: str, now: float | None = None) -> int | None:
+        """Record a call. Returns ``None`` if allowed, else seconds until it would be."""
+        now = time.monotonic() if now is None else now
+        with self._lock:
+            if len(self._calls) > 10_000:  # bound memory: drop callers with no recent calls
+                self._calls = {
+                    k: q for k, q in self._calls.items() if q and now - q[-1] < self.window
+                }
+            q = self._calls.setdefault(key, deque())
+            while q and now - q[0] >= self.window:
+                q.popleft()
+            if len(q) >= self.per_minute:
+                return max(1, int(self.window - (now - q[0])) + 1)
+            q.append(now)
+            return None
 
 
 def to_http_error(exc: Exception) -> HTTPException:
@@ -201,6 +241,7 @@ def create_router(
     *,
     api_key: str | None = None,
     max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
+    rate_limit_per_minute: int | None = None,
 ) -> APIRouter:
     """Build an :class:`fastapi.APIRouter` exposing ``service`` under ``/v1``.
 
@@ -209,7 +250,28 @@ def create_router(
         api_key: If set, every request must send ``Authorization: Bearer <api_key>``.
             Leave unset only when your own app already authenticates these routes.
         max_upload_bytes: Upper bound on uploaded file size.
+        rate_limit_per_minute: If set, each caller (by client address) may make at most this
+            many costly calls (uploads and questions) per minute; excess calls get HTTP 429
+            with a ``Retry-After`` header. Questions spend model tokens, so set this for any
+            API that untrusted or many users can reach. Behind a reverse proxy, make sure
+            the proxy passes the real client address (for example with Uvicorn's
+            ``--proxy-headers``), or every caller shares one bucket.
     """
+    limiter = RateLimiter(rate_limit_per_minute) if rate_limit_per_minute else None
+
+    def throttle(request: Request) -> None:
+        if limiter is None:
+            return
+        wait = limiter.check(request.client.host if request.client else "unknown")
+        if wait is not None:
+            raise _error(
+                429,
+                "rate_limited",
+                "Too many requests; slow down.",
+                headers={"Retry-After": str(wait)},
+                retry_after_seconds=wait,
+            )
+
     router = APIRouter(
         prefix="/v1",
         tags=["documents"],
@@ -221,7 +283,12 @@ def create_router(
         },
     )
 
-    @router.post("/documents", status_code=201, response_model=DocumentResponse)
+    @router.post(
+        "/documents",
+        status_code=201,
+        response_model=DocumentResponse,
+        dependencies=[Depends(throttle)],
+    )
     async def upload_document(
         file: Annotated[UploadFile, File(description=".pdf, .txt, .md or .rst")],
         id: Annotated[str | None, Form(description="Your own document ID")] = None,
@@ -266,7 +333,11 @@ def create_router(
         if not found:
             raise to_http_error(DocumentNotFoundError(document_id))
 
-    @router.post("/documents/{document_id}/ask", response_model=AnswerResponse)
+    @router.post(
+        "/documents/{document_id}/ask",
+        response_model=AnswerResponse,
+        dependencies=[Depends(throttle)],
+    )
     async def ask(document_id: str, body: AskRequest) -> dict[str, Any]:
         """Answer a question about a document, with citations."""
         try:
@@ -292,6 +363,7 @@ def create_app(
     *,
     api_key: str | None = None,
     max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
+    rate_limit_per_minute: int | None = None,
 ) -> FastAPI:
     """Build a standalone FastAPI application.
 
@@ -301,6 +373,8 @@ def create_app(
             environment variable; if neither is set, the API is unauthenticated and a
             warning is logged.
         max_upload_bytes: Upper bound on uploaded file size.
+        rate_limit_per_minute: Maximum uploads plus questions per client address per
+            minute, or ``None`` for no limit. See :func:`create_router`.
     """
     api_key = api_key or os.environ.get(API_KEY_ENV) or None
     if api_key is None:
@@ -318,7 +392,14 @@ def create_app(
         license_info={"name": "MIT", "identifier": "MIT"},
     )
     app.state.service = service
-    app.include_router(create_router(service, api_key=api_key, max_upload_bytes=max_upload_bytes))
+    app.include_router(
+        create_router(
+            service,
+            api_key=api_key,
+            max_upload_bytes=max_upload_bytes,
+            rate_limit_per_minute=rate_limit_per_minute,
+        )
+    )
 
     @app.exception_handler(HTTPException)
     async def _http_error(_: Request, exc: HTTPException) -> JSONResponse:

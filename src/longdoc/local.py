@@ -247,7 +247,8 @@ class _AsyncStream:
 
     async def get_final_message(self) -> LocalMessage:
         """Return the completed message."""
-        assert self._message is not None
+        if self._message is None:
+            raise RuntimeError("get_final_message() called outside 'async with'")
         return self._message
 
 

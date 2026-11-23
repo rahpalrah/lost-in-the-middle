@@ -9,10 +9,21 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable, Sequence
+from html import escape as _html_escape
 from typing import Any
-from xml.sax.saxutils import escape, quoteattr
 
 from .models import ChunkedDocument, ParentChunk
+
+
+def _text(value: str) -> str:
+    """Escape ``&``, ``<`` and ``>`` so text cannot open or close a tag in the prompt."""
+    return _html_escape(value, quote=False)
+
+
+def _attr(value: str) -> str:
+    """Escape and double-quote an attribute value (quotes become ``&quot;``)."""
+    return f'"{_html_escape(value, quote=True)}"'
+
 
 SYSTEM_PROMPT = """\
 You answer questions about a document using only the sections provided to you.
@@ -50,12 +61,12 @@ def clean_answer(text: str) -> str:
 
 def render_section(parent: ParentChunk) -> str:
     """Render one parent section as an XML-tagged block."""
-    attrs = [f"id={quoteattr(parent.id)}"]
+    attrs = [f"id={_attr(parent.id)}"]
     if parent.heading:
-        attrs.append(f"heading={quoteattr(parent.heading)}")
+        attrs.append(f"heading={_attr(parent.heading)}")
     if parent.page_label:
-        attrs.append(f"pages={quoteattr(parent.page_label)}")
-    return f"<section {' '.join(attrs)}>\n{escape(parent.text)}\n</section>"
+        attrs.append(f"pages={_attr(parent.page_label)}")
+    return f"<section {' '.join(attrs)}>\n{_text(parent.text)}\n</section>"
 
 
 def render_sections(parents: Iterable[ParentChunk]) -> str:
@@ -76,7 +87,7 @@ def system_blocks(
     """
     blocks: list[dict[str, Any]] = [{"type": "text", "text": instructions}]
     if document is not None:
-        title = f" source={quoteattr(document.source)}" if document.source else ""
+        title = f" source={_attr(document.source)}" if document.source else ""
         blocks.append(
             {
                 "type": "text",
@@ -95,7 +106,7 @@ def user_message(question: str, context: Sequence[ParentChunk] | None = None) ->
             parts.append(f"<sections>\n{render_sections(context)}\n</sections>")
         else:
             parts.append("<sections>\n(no matching sections were found)\n</sections>")
-    parts.append(f"<question>\n{question.strip()}\n</question>")
+    parts.append(f"<question>\n{_text(question.strip())}\n</question>")
     return {"role": "user", "content": "\n\n".join(parts)}
 
 

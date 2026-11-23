@@ -64,6 +64,11 @@ to skip the baseline (about $1).
 
 ## Results
 
+For the evaluation against industry-standard metrics and security checks, with confidence
+intervals, see [`docs/QUALITY_REPORT.md`](../../docs/QUALITY_REPORT.md). One correction to the
+summary below: with only 15 questions, the gain from hybrid search is **not statistically
+significant** (one question), and embeddings alone rank slightly better than my hybrid.
+
 ### Local model, no API key (Phi-3.5-mini, 4-core CPU, 2026-11-23)
 
 | Retrieval | Correct | Right section retrieved | Median time per answer |
@@ -73,7 +78,8 @@ to skip the baseline (about $1).
 
 - Hybrid search fixed Q10 ("how much are we paying per year" -> "Annual Subscription
   Fee"). Q13 ("the vendor is acquired" -> "Change of Control") still fails: neither
-  keyword nor embedding search ranks that section in the top 100 for this wording. The
+  keyword nor embedding search ranks that section in the top 4 for this wording (its best passage
+  ranked 73rd for keyword search and 110th for embeddings). The
   model correctly said the sections it received did not answer the question.
 - Citations were correct in only 67% of hybrid-run answers (80% keyword-only). Reading every answer found problems the scoring missed: wrong or missing citations
   (Q05, Q06, Q08, Q11, Q13), echoed prompt markup (Q03, Q09, Q11), a misquote (Q12).

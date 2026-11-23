@@ -6,6 +6,32 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-23
+
+Security hardening and quality evaluation (see `docs/QUALITY_REPORT.md`).
+
+### Security
+
+- User questions are now escaped before entering the prompt (they could previously close
+  the `<question>` tag or forge `<section>` blocks). Attribute values are always
+  double-quoted and escaped.
+- Optional per-client rate limit on uploads and questions
+  (`rate_limit_per_minute`, `LONGDOC_RATE_LIMIT_PER_MIN`), answered with 429 and `Retry-After`.
+- Removed an `assert` used for control flow; replaced `xml.sax` escaping with `html.escape`
+  (Bandit: 2 low findings, now 0).
+- CI: Bandit and `pip-audit` job; Dependabot for dependencies and actions.
+
+### Added
+
+- Tests can no longer reach the Anthropic API: credentials are removed and the base URL
+  points at a closed port for every test. The benchmark's `--live` mode needs
+  `LONGDOC_ALLOW_LIVE_API=1`.
+- `tests/test_security.py` (prompt injection, limits, auth, path traversal).
+- `benchmarks/contract_review/eval_retrieval.py` and `eval_answers.py`: Hit@k, Recall@k,
+  MRR, nDCG@k with bootstrap intervals, citation precision/recall, groundedness,
+  abstention.
+- `docs/QUALITY_REPORT.md`.
+
 ### Added
 
 - `docs/INTEGRATION.md`: step-by-step integration guide (library, FastAPI, standalone service,

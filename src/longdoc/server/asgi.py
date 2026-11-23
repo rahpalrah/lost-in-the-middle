@@ -19,6 +19,8 @@ Environment variables:
     ``default`` (the default) or ``none``.
 ``LONGDOC_MAX_UPLOAD_MB``
     Upload size limit in megabytes (default 25).
+``LONGDOC_RATE_LIMIT_PER_MIN``
+    Maximum uploads plus questions per client address per minute (default: unlimited).
 ``LONGDOC_LOCAL_MODEL``
     Path to a GGUF model. When set, answers come from this local model instead of
     Claude, and no Anthropic API key is needed (requires the ``local`` extra).
@@ -75,6 +77,9 @@ def app_from_env(env: Mapping[str, str] | None = None) -> FastAPI:
         service,
         api_key=env.get("LONGDOC_API_KEY") or None,
         max_upload_bytes=int(max_mb * 1024 * 1024),
+        rate_limit_per_minute=int(env["LONGDOC_RATE_LIMIT_PER_MIN"])
+        if env.get("LONGDOC_RATE_LIMIT_PER_MIN")
+        else None,
     )
 
 

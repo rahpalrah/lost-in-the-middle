@@ -35,6 +35,19 @@ def make_contract() -> Document:
     return Document.from_pages(pages, source="contract.pdf")
 
 
+@pytest.fixture(autouse=True)
+def _no_real_anthropic_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make it impossible for any test to call the Anthropic API.
+
+    Credentials are removed, and the API base URL points at a closed local port, so even a
+    test that accidentally builds a real ``anthropic.Anthropic()`` client cannot reach
+    the network or spend money. Tests use fake clients instead.
+    """
+    for name in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_PROFILE"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://127.0.0.1:9")
+
+
 @pytest.fixture
 def contract() -> Document:
     return make_contract()

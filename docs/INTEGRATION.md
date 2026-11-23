@@ -282,6 +282,7 @@ answer = client.post(
 | `LONGDOC_CACHE_TTL` | `5m` | `5m` or `1h` |
 | `LONGDOC_FALLBACKS` | `default` | `none` to disable refusal fallbacks |
 | `LONGDOC_MAX_UPLOAD_MB` | `25` | Upload size limit |
+| `LONGDOC_RATE_LIMIT_PER_MIN` | unlimited | Max uploads plus questions per client address per minute (per process) |
 | `LONGDOC_LOCAL_MODEL` | none | Path to a GGUF model: answer locally instead of with Claude |
 | `LONGDOC_LOCAL_CTX` | `16384` | Local model context window in tokens |
 
@@ -450,6 +451,8 @@ child_overlap_chars=...)`.
 - [ ] `LONGDOC_API_KEY` set (or your own auth in front of a mounted router).
 - [ ] TLS terminated in front of the service.
 - [ ] The service is on a private network, reachable only by your backends.
+- [ ] `LONGDOC_RATE_LIMIT_PER_MIN` set (questions spend tokens), plus a limit at your gateway.
+- [ ] Per-user access to document IDs is checked in your app (longdoc has one shared token).
 - [ ] `ANTHROPIC_API_KEY` lives in your secret manager, not in code or images.
 - [ ] You have confirmed that sending these documents to the Anthropic API is permitted.
 - [ ] Per-user authorisation is enforced **in your app**: longdoc authenticates callers, it does
@@ -478,7 +481,7 @@ child_overlap_chars=...)`.
 - [ ] The `longdoc` logger captured (`DEBUG`: request IDs and token usage; `WARNING`: truncation and
       missing authentication). Log `answer.request_id` to trace a call in Anthropic support.
 - [ ] Back up the document store, or keep your source files so documents can be re-indexed.
-- [ ] Pin the version (`longdoc-qa==0.5.0`) and read [`CHANGELOG.md`](../CHANGELOG.md) before upgrading.
+- [ ] Pin the version (`longdoc-qa==0.6.0`) and read [`CHANGELOG.md`](../CHANGELOG.md) before upgrading.
 
 ---
 
