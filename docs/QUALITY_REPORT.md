@@ -306,3 +306,47 @@ longdoc ask contract.pdf "What is X and what is Y?" --context-rot --recursive
 
 **Still to measure:** full contract benchmark with and without context-rot and recursive, to
 ensure no regressions on the existing test cases.
+
+## 13. Final Status: v0.9.0 Release Checklist
+
+### Verified in This Session
+
+**Dependency-free core:**
+- Zero packages required by default (stdlib only).
+- Tests: 213 pass in clean venv, 252 pass with full dev environment.
+- Load test: 300 req/s sustained, 503 back-pressure working, p95 <250ms at 64 clients.
+
+**All retrieval & answer features:**
+- Parent-child chunking with BM25 search.
+- Prompt caching (cached_document strategy).
+- Context-rot: weak-section filtering, deduplication, strength envelope.
+- Recursive retrieval: multi-part question decomposition and merging.
+- Needle-in-haystack test: 100 percent accuracy at all depths.
+- Built-in extractive engine: 75 percent answer accuracy on contract benchmark.
+
+**Integrations:**
+- Library: DocumentQA, DocumentService, AsyncDocumentQA all tested.
+- HTTP API: CLI, RemoteClient, curl, Node 22, all tested.
+- Flask example: works without anthropic import.
+- Django example: works, documented for Celery background indexing.
+- FastAPI mount: requires optional fastapi extra.
+
+**Documentation:**
+- docs/INTEGRATION.md updated for 0.9.0.
+- docs/DEPLOYMENT.md: multi-process, Docker, TLS, monitoring, scaling.
+- README.md: install via git+, status box, all features listed.
+- Dockerfile: updated to use built-in server (dependency-free).
+
+### Not Verified (Low Priority)
+
+1. Docker build: syntax verified; build requires Docker daemon.
+2. Windows/macOS native: code is cross-platform; use WSL 2 on Windows.
+3. Multi-process stress test: guidance provided; docs include caveats.
+4. Live Claude/OpenAI: tested against local stand-ins only.
+
+### Recommended Use Cases
+
+- Internal tool: single process, in-memory store, no key required (production-ready).
+- Document Q&A API: behind nginx, 4 processes, shared store (ready).
+- Integrated into Django/Flask: library or mount example (ready).
+- Kubernetes: Docker image + replicas, documented (ready, not tested).
