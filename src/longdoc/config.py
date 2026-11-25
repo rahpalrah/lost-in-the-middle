@@ -83,13 +83,11 @@ class QAConfig:
             support them).
         system_prompt: Override the built-in instructions. Keep it constant: any change
             invalidates the prompt cache.
-        context_rot: Clean the retrieved context before it is used (see
-            :mod:`longdoc.context`): drop weak sections, drop near-duplicates, put the strongest
-            evidence at the start and end, and compact over-budget sections to the sentences that
-            matter. Reduces the "lost in the middle" effect and wasted tokens.
-        recursive: Retrieve recursively (see :mod:`longdoc.recursive`): split a multi-part
-            question into sub-questions, search each over a tree of sections, and merge the
-            results, so no part of the question is crowded out by another.
+        context_rot: Drop weak and near-duplicate hits and put the strongest sections at the
+            start and end of the context (see :mod:`longdoc.context`). Off by default; not
+            measured to improve answers (no effect on the built-in engine).
+        recursive: Split a multi-part question into sub-questions, search each, and merge the
+            hits (see :mod:`longdoc.recursive`). Off by default; not measured to help.
         min_relevance: With ``context_rot``, a section is kept only if its score is at least this
             share of the best section's score.
     """

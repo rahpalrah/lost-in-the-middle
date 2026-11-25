@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-25
+
+### Added
+
+- **Self-service API keys** (`LONGDOC_ACCOUNTS_FILE`): `/register`, emailed one-time verification,
+  key shown once (hash stored), per-account usage counts, `/admin` page, revoke, and owner alerts
+  by GitHub issue, email or events file. See `docs/ACCOUNTS.md`.
+- Opt-in `QAConfig(context_rot=True)` and `QAConfig(recursive=True)`. Not measured to improve
+  answers (no effect on the built-in engine); off by default.
+- `benchmarks/needle.py`, `benchmarks/contract_review/compare_features.py`.
+
+### Changed
+
+- Dockerfile runs the built-in server; examples no longer import the Anthropic SDK.
+
 ## [0.8.0] - 2026-11-23
 
 ### Changed

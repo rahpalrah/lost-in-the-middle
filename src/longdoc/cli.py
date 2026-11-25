@@ -148,7 +148,7 @@ def _serve(args: argparse.Namespace) -> int:
     from .server import serve, settings_from_env
 
     settings = settings_from_env()
-    if settings.api_key is None and args.host not in _LOOPBACK:
+    if settings.api_key is None and settings.accounts is None and args.host not in _LOOPBACK:
         print(
             "warning: listening on a non-local address WITHOUT authentication. "
             "Set LONGDOC_API_KEY.",

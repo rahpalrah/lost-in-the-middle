@@ -28,6 +28,13 @@ Environment variables:
     Requests handled at once by the built-in server before it answers 503 (default 32).
 ``LONGDOC_TRUST_PROXY``
     ``1`` to use ``X-Forwarded-For`` as the client address (only behind a trusted proxy).
+``LONGDOC_ACCOUNTS`` / ``LONGDOC_ACCOUNTS_FILE``
+    Turn on self-service keys (``/register``); the file persists accounts. Related:
+    ``LONGDOC_PUBLIC_URL`` (used in emailed links), ``LONGDOC_ADMIN_TOKEN`` (for ``/admin``),
+    ``LONGDOC_SMTP_HOST/PORT/USER/PASSWORD/FROM`` (verification and owner email),
+    ``LONGDOC_OWNER_EMAIL``, ``LONGDOC_EVENTS_FILE``, ``LONGDOC_GITHUB_REPO`` +
+    ``LONGDOC_GITHUB_TOKEN`` (owner alerts as issues in a **private** repo),
+    ``LONGDOC_ACCOUNTS_DEV`` (return the verify link in the response; local testing only).
 ``LONGDOC_ENV_FILE``
     Path to a ``.env`` file. Real environment variables take precedence over the file.
 """
@@ -39,6 +46,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
+from ..accounts import AccountService
 from ..api import DEFAULT_MAX_UPLOAD_BYTES
 from ..config import QAConfig, Strategy
 from ..env import read_env_file
@@ -59,6 +67,7 @@ class Settings:
     max_concurrency: int
     trust_proxy: bool
     provider: str
+    accounts: AccountService | None = None
 
 
 def config_from_env(env: Mapping[str, str]) -> QAConfig:
@@ -126,4 +135,5 @@ def settings_from_env(env: Mapping[str, str] | None = None) -> Settings:
         max_concurrency=int(env.get("LONGDOC_MAX_CONCURRENCY", "32")),
         trust_proxy=env.get("LONGDOC_TRUST_PROXY", "") in ("1", "true", "yes"),
         provider=provider,
+        accounts=AccountService.from_env(env),
     )

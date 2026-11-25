@@ -31,6 +31,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+from ..accounts import AccountService
 from ..api import ApiError, ApiResponse, LongDocApi, error_response
 from ..service import DocumentService
 from .envconfig import Settings, settings_from_env
@@ -167,13 +168,18 @@ def create_server(
     rate_limit_per_minute: int | None = None,
     max_concurrency: int = 32,
     trust_proxy: bool = False,
+    accounts: AccountService | None = None,
 ) -> LongDocServer:
     """Build (but do not start) a server for ``service``. Use ``port=0`` for a free port."""
     kwargs: dict[str, Any] = {}
     if max_upload_bytes is not None:
         kwargs["max_upload_bytes"] = max_upload_bytes
     api = LongDocApi(
-        service, api_key=api_key, rate_limit_per_minute=rate_limit_per_minute, **kwargs
+        service,
+        api_key=api_key,
+        rate_limit_per_minute=rate_limit_per_minute,
+        accounts=accounts,
+        **kwargs,
     )
     return LongDocServer(
         (host, port), api, max_concurrency=max_concurrency, trust_proxy=trust_proxy
@@ -192,6 +198,7 @@ def serve(settings: Settings | None = None, *, host: str = "127.0.0.1", port: in
         rate_limit_per_minute=settings.rate_limit_per_minute,
         max_concurrency=settings.max_concurrency,
         trust_proxy=settings.trust_proxy,
+        accounts=settings.accounts,
     )
 
     def stop(*_: Any) -> None:
@@ -204,3 +211,5 @@ def serve(settings: Settings | None = None, *, host: str = "127.0.0.1", port: in
         server.serve_forever()
     finally:
         server.server_close()
+        if settings.accounts is not None:
+            settings.accounts.flush()

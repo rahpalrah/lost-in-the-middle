@@ -60,6 +60,12 @@ the document does not contain the answer.
 > not verified. The Claude and OpenAI request paths have been tested against local stand-in
 > servers only, never against the live services.
 
+## Let people register for their own key
+
+Turn on `/register`: people enter an email, get a verification link, then their own API key; you
+get an alert (GitHub issue and/or email) per signup and see usage per account on `/admin`.
+Setup, email and limits: [docs/ACCOUNTS.md](docs/ACCOUNTS.md).
+
 ## Choose your integration
 
 > **Step-by-step instructions for your own systems, applications and architecture are in the

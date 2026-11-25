@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ._version import __version__
+from .accounts import AccountError, AccountService
 from .config import Strategy
 from .exceptions import (
     ConfigurationError,
@@ -58,6 +59,7 @@ from .http import (
 )
 from .serialization import answer_to_dict, section_to_dict
 from .service import DocumentNotFoundError, DocumentService
+from .web import CSP, admin_html, error_html, register_html, verified_html
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +107,18 @@ def _json(status: int, data: Any, headers: Mapping[str, str] | None = None) -> A
         status,
         json.dumps(data, ensure_ascii=False).encode("utf-8"),
         {"content-type": "application/json; charset=utf-8", **(headers or {})},
+    )
+
+
+def _html(status: int, page: str) -> ApiResponse:
+    return ApiResponse(
+        status,
+        page.encode("utf-8"),
+        {
+            "content-type": "text/html; charset=utf-8",
+            "content-security-policy": CSP,
+            "referrer-policy": "no-referrer",
+        },
     )
 
 
@@ -289,8 +303,27 @@ _ROUTES: list[tuple[re.Pattern[str], str, tuple[str, ...]]] = [
     (re.compile(rf"^/v1/documents/{_ID}$"), "document", ("GET", "DELETE")),
     (re.compile(rf"^/v1/documents/{_ID}/ask$"), "ask", ("POST",)),
     (re.compile(rf"^/v1/documents/{_ID}/retrieve$"), "retrieve", ("POST",)),
+    # self-service keys (only active when accounts are enabled)
+    (re.compile(r"^/register$"), "register_page", ("GET",)),
+    (re.compile(r"^/verify$"), "verify_page", ("GET",)),
+    (re.compile(r"^/admin$"), "admin_page", ("GET",)),
+    (re.compile(r"^/v1/register$"), "register", ("POST",)),
+    (re.compile(r"^/v1/admin/accounts$"), "admin_accounts", ("GET",)),
+    (re.compile(rf"^/v1/admin/accounts/{_ID}/revoke$"), "admin_revoke", ("POST",)),
 ]
-_PUBLIC = {"health", "openapi"}
+# No bearer-key check in the dispatcher. The admin routes check the admin token themselves.
+_PUBLIC = {
+    "health",
+    "openapi",
+    "register_page",
+    "verify_page",
+    "admin_page",
+    "register",
+    "admin_accounts",
+    "admin_revoke",
+}
+_ACCOUNT_THROTTLED = {"register", "verify_page"}
+_USAGE = {"documents", "text", "document", "ask", "retrieve"}
 _THROTTLED = {"documents:POST", "text", "ask"}
 
 
@@ -300,6 +333,8 @@ class LongDocApi:
     Args:
         service: The :class:`DocumentService` that stores and answers questions about documents.
         api_key: If set, ``/v1`` requests must send ``Authorization: Bearer <api_key>``.
+        accounts: If set, people can register for their own keys (``/register``), which are
+            accepted in addition to ``api_key``. See :mod:`longdoc.accounts`.
         max_upload_bytes: Upper bound on a request body.
         rate_limit_per_minute: If set, each client may make at most this many uploads plus
             questions per minute.
@@ -312,12 +347,15 @@ class LongDocApi:
         api_key: str | None = None,
         max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
         rate_limit_per_minute: int | None = None,
+        accounts: AccountService | None = None,
     ) -> None:
+        self.accounts = accounts
+        self.register_limiter = RateLimiter(10)
         self.service = service
         self.api_key = api_key
         self.max_upload_bytes = max_upload_bytes
         self.limiter = RateLimiter(rate_limit_per_minute) if rate_limit_per_minute else None
-        if api_key is None:
+        if api_key is None and accounts is None:
             logger.warning(
                 "longdoc API is running WITHOUT authentication. Set %s for any shared deployment.",
                 API_KEY_ENV,
@@ -365,31 +403,58 @@ class LongDocApi:
                     f"{method} is not allowed here.",
                     headers={"allow": ", ".join(methods)},
                 )
-            if name not in _PUBLIC:
-                self._authenticate(headers)
+            account = None if name in _PUBLIC else self._authenticate(headers)
             if name in _THROTTLED or f"{name}:{method}" in _THROTTLED:
                 self._throttle(client)
+            if name in _ACCOUNT_THROTTLED:
+                self._throttle_register(client)
             if len(body) > self.max_upload_bytes:
                 raise ApiError(
                     413, "too_large", f"Requests are limited to {self.max_upload_bytes} bytes."
                 )
             doc_id = urllib.parse.unquote(match.groupdict().get("id", "")) or None
+            if name == "verify_page":
+                return self._verify_page(urllib.parse.urlsplit(path).query)
+            if account not in (None, "master") and self.accounts is not None and name in _USAGE:
+                uploading = name == "text" or (name == "documents" and method == "POST")
+                self.accounts.record_use(account, "upload" if uploading else name)
             handler: Callable[..., ApiResponse] = getattr(self, f"_{name}")
             return handler(method, headers, body, doc_id)
         raise ApiError(404, "not_found", "No such route.")
 
-    def _authenticate(self, headers: Mapping[str, str]) -> None:
-        if self.api_key is None:
-            return
+    def _authenticate(self, headers: Mapping[str, str]) -> str | None:
+        """Check the bearer token. Returns the account email, ``"master"``, or ``None`` (open)."""
+        if self.api_key is None and self.accounts is None:
+            return None
         auth = headers.get("authorization", "")
         scheme, _, token = auth.partition(" ")
         supplied = token.strip() if scheme.lower() == "bearer" else ""
-        if not secrets.compare_digest(supplied.encode(), self.api_key.encode()):
+        if supplied and self.accounts is not None:
+            email = self.accounts.authenticate(supplied)
+            if email is not None:
+                return email
+        if (
+            supplied
+            and self.api_key is not None
+            and secrets.compare_digest(supplied.encode(), self.api_key.encode())
+        ):
+            return "master"
+        raise ApiError(
+            401,
+            "unauthorized",
+            "Missing or invalid bearer token.",
+            headers={"www-authenticate": "Bearer"},
+        )
+
+    def _throttle_register(self, client: str) -> None:
+        wait = self.register_limiter.check(client)
+        if wait is not None:
             raise ApiError(
-                401,
-                "unauthorized",
-                "Missing or invalid bearer token.",
-                headers={"www-authenticate": "Bearer"},
+                429,
+                "rate_limited",
+                "Too many attempts; try again later.",
+                details={"retry_after_seconds": wait},
+                headers={"retry-after": str(wait)},
             )
 
     def _throttle(self, client: str) -> None:
@@ -404,6 +469,76 @@ class LongDocApi:
                 details={"retry_after_seconds": wait},
                 headers={"retry-after": str(wait)},
             )
+
+    # -- self-service keys -----------------------------------------------------------------------
+
+    def _require_accounts(self) -> AccountService:
+        if self.accounts is None:
+            raise ApiError(
+                404, "not_found", "Self-service accounts are not enabled on this server."
+            )
+        return self.accounts
+
+    def _require_admin(self, headers: Mapping[str, str]) -> AccountService:
+        accounts = self._require_accounts()
+        if not accounts.admin_token:
+            raise ApiError(404, "not_found", "Admin is not configured (set LONGDOC_ADMIN_TOKEN).")
+        scheme, _, token = headers.get("authorization", "").partition(" ")
+        supplied = token.strip() if scheme.lower() == "bearer" else ""
+        if not secrets.compare_digest(supplied.encode(), accounts.admin_token.encode()):
+            raise ApiError(
+                401,
+                "unauthorized",
+                "Missing or invalid admin token.",
+                headers={"www-authenticate": "Bearer"},
+            )
+        return accounts
+
+    def _register_page(self, *_: Any) -> ApiResponse:
+        self._require_accounts()
+        return _html(200, register_html())
+
+    def _admin_page(self, *_: Any) -> ApiResponse:
+        self._require_accounts()
+        return _html(200, admin_html())
+
+    def _register(
+        self, _m: str, _h: Mapping[str, str], body: bytes, _id: str | None
+    ) -> ApiResponse:
+        accounts = self._require_accounts()
+        data = _loads(body)
+        if not isinstance(data, dict):
+            raise ApiError(400, "bad_request", "Send a JSON object with an email field.")
+        try:
+            return _json(202, accounts.start_registration(str(data.get("email", ""))))
+        except AccountError as exc:
+            raise ApiError(422, "invalid_request", str(exc)) from exc
+
+    def _verify_page(self, query: str) -> ApiResponse:
+        accounts = self._require_accounts()
+        token = urllib.parse.parse_qs(query).get("token", [""])[0]
+        if not token or len(token) > 200:
+            return _html(400, error_html("This verification link is invalid."))
+        try:
+            email, key = accounts.complete_verification(token)
+        except AccountError as exc:
+            return _html(400, error_html(str(exc)))
+        return _html(200, verified_html(email, key, accounts.public_url))
+
+    def _admin_accounts(
+        self, _m: str, headers: Mapping[str, str], _b: bytes, _id: str | None
+    ) -> ApiResponse:
+        accounts = self._require_admin(headers)
+        accounts.flush()
+        return _json(200, accounts.store.list())
+
+    def _admin_revoke(
+        self, _m: str, headers: Mapping[str, str], _b: bytes, email: str | None
+    ) -> ApiResponse:
+        accounts = self._require_admin(headers)
+        if not email or not accounts.revoke(email.strip().lower()):
+            raise ApiError(404, "not_found", "No such account.")
+        return _json(200, {"revoked": email})
 
     # -- handlers --------------------------------------------------------------------------------
 

@@ -27,8 +27,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from longdoc import Document, DocumentQA, QAConfig  # noqa: E402
-from longdoc.extractive import ExtractiveClient  # noqa: E402
+from longdoc import Document, DocumentQA, QAConfig
+from longdoc.extractive import ExtractiveClient
 
 TOPICS = ("notice period", "liability cap", "payment term", "audit frequency", "insurance minimum")
 UNITS = {
@@ -94,16 +94,18 @@ def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     return (round(max(0.0, c - h), 3), round(min(1.0, c + h), 3))
 
 
-def evaluate(config: QAConfig, kind: str, sizes: list[int], depths_list: list[list[float]],
-             seeds: int) -> dict[int, dict[str, object]]:
+def evaluate(
+    config: QAConfig, kind: str, sizes: list[int], depths_list: list[list[float]], seeds: int
+) -> dict[int, dict[str, object]]:
     out: dict[int, dict[str, object]] = {}
     for size in sizes:
         retr = acc = total = 0
         for depths in depths_list:
             for seed in range(seeds):
                 case = make_case(size, depths, seed * 101 + size, [kind])
-                qa = DocumentQA(Document.from_text(case.document), client=ExtractiveClient(),
-                                config=config)
+                qa = DocumentQA(
+                    Document.from_text(case.document), client=ExtractiveClient(), config=config
+                )
                 context = qa.retrieve(case.question)
                 joined = "\n".join(p.text for p in context)
                 got_retr = all(e in joined for e in case.needle_ids)
@@ -125,8 +127,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--sizes", default="50000,300000,1500000", help="Document sizes in characters")
     ap.add_argument("--seeds", type=int, default=6)
     ap.add_argument("--compare", action="store_true", help="Compare configurations side by side")
-    ap.add_argument("--set", action="append", default=[], metavar="K=V",
-                    help="QAConfig override for the run, e.g. --set context_rot=true")
+    ap.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="K=V",
+        help="QAConfig override for the run, e.g. --set context_rot=true",
+    )
     ap.add_argument("--out", type=Path)
     args = ap.parse_args(argv)
     sizes = [int(s) for s in args.sizes.split(",")]
@@ -158,9 +165,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"== {name}")
         for kind, per_size in res.items():
             for size, r in per_size.items():
-                print(f"  {kind:<6} {size:>9,} chars  n={r['n']:<3} "
-                      f"retrieval {r['retrieval'][0]}/{r['n']} {r['retrieval'][1]}  "  # type: ignore[index]
-                      f"answer {r['answer'][0]}/{r['n']} {r['answer'][1]}")  # type: ignore[index]
+                print(
+                    f"  {kind:<6} {size:>9,} chars  n={r['n']:<3} "
+                    f"retrieval {r['retrieval'][0]}/{r['n']} {r['retrieval'][1]}  "  # type: ignore[index]
+                    f"answer {r['answer'][0]}/{r['n']} {r['answer'][1]}"
+                )  # type: ignore[index]
     if args.out:
         args.out.write_text(json.dumps(report, indent=2) + "\n")
     return 0

@@ -15,12 +15,12 @@ from typing import Any
 from .aio import AsyncAdapter
 from .chunking import ParentChildChunker
 from .config import ChunkingConfig, QAConfig, Strategy
+from .context import clean_hits, order_by_strength
 from .exceptions import ConfigurationError, RefusalError
 from .loaders import load_document
 from .models import Answer, ChunkedDocument, Document, ParentChunk, TokenUsage
 from .prompts import SYSTEM_PROMPT, clean_answer, extract_citations, system_blocks, user_message
 from .providers import make_client
-from .context import clean_hits
 from .recursive import decompose_heuristic, merge_hits
 from .retrieval import BM25Retriever, Retriever, select_parents
 
@@ -78,16 +78,15 @@ class _QACore:
         else:
             hits = self.retriever.search(question, self.config.top_k_children)
 
-        # Clean the hits if ``context_rot`` is enabled.
         if self.config.context_rot:
             hits = clean_hits(hits, min_relevance=self.config.min_relevance)
-
-        return select_parents(
+        parents = select_parents(
             hits,
             self.chunks,
             max_parents=self.config.max_parents,
             max_chars=self.config.max_context_chars,
         )
+        return order_by_strength(parents, hits) if self.config.context_rot and parents else parents
 
     # -- request building ----------------------------------------------------------
 

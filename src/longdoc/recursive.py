@@ -32,7 +32,7 @@ from __future__ import annotations
 import re
 from typing import NamedTuple
 
-from .retrieval import RetrievalHit
+from .models import RetrievalHit
 
 
 class SubQuestion(NamedTuple):
@@ -61,8 +61,10 @@ def decompose_heuristic(question: str) -> list[SubQuestion]:
         parts = q.split(" and ")
         if len(parts) == 2:
             return [
-                SubQuestion(text=parts[0].replace("what are ", "what is ", 1),
-                           keywords=_extract_keywords(parts[0])),
+                SubQuestion(
+                    text=parts[0].replace("what are ", "what is ", 1),
+                    keywords=_extract_keywords(parts[0]),
+                ),
                 SubQuestion(text=parts[1], keywords=_extract_keywords(parts[1])),
             ]
 
@@ -78,11 +80,37 @@ def decompose_heuristic(question: str) -> list[SubQuestion]:
 def _extract_keywords(text: str) -> list[str]:
     """Extract meaningful keywords from a question or phrase."""
     # Remove common question words and punctuation.
-    words = re.findall(r'\b[a-z_-]{3,}\b', text.lower())
+    words = re.findall(r"\b[a-z_-]{3,}\b", text.lower())
     stop = {
-        "what", "is", "are", "the", "for", "and", "or", "in", "on", "at", "to", "of",
-        "how", "which", "can", "must", "does", "do", "did", "has", "have", "been",
-        "will", "would", "should", "could", "may", "might", "shall",
+        "what",
+        "is",
+        "are",
+        "the",
+        "for",
+        "and",
+        "or",
+        "in",
+        "on",
+        "at",
+        "to",
+        "of",
+        "how",
+        "which",
+        "can",
+        "must",
+        "does",
+        "do",
+        "did",
+        "has",
+        "have",
+        "been",
+        "will",
+        "would",
+        "should",
+        "could",
+        "may",
+        "might",
+        "shall",
     }
     return [w for w in words if w not in stop][:5]  # limit to top 5
 

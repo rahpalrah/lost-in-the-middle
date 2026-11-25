@@ -253,100 +253,33 @@ python benchmarks/contract_review/eval_answers.py results/<run>/results.json:hyb
 The benchmark's `--live` mode (billed Claude calls) will not run unless
 `LONGDOC_ALLOW_LIVE_API=1` is set.
 
-## 12. Update for 0.9.0: context-rot handling and recursive retrieval
+## 12. Context-rot options and recursive retrieval (0.9.0): implemented, not shown to help
 
-**Context-rot (optional, `--context-rot` / `context_rot=True`):**
-- Drops sections scoring < 25% of the max score (configurable with `min_relevance`).
-- Deduplicates near-duplicates (> 85% text overlap).
-- Reorganizes by "strength envelope": highest-scoring sections at the edges, weaker in the
-  middle, to counteract the "lost-in-the-middle" effect where language models attend less
-  reliably to text in the middle of long contexts.
-- Compacts over-budget sections to their top N sentences instead of discarding them wholesale.
+Two opt-in settings exist: `QAConfig(context_rot=True)` (drop weak and near-duplicate hits; put the
+strongest sections at the start and end) and `QAConfig(recursive=True)` (split a multi-part
+question, search each part, merge hits). Both are **off by default**.
 
-**Recursive retrieval (optional, `--recursive` / `recursive=True`):**
-- Heuristically decomposes multi-part questions ("What is X and Y?") into sub-questions.
-- Searches each sub-question independently and merges the results.
-- Prevents one topic from crowding out another when both are distant in the document.
+**Measured result: no effect.** `benchmarks/contract_review/compare_features.py` runs the 16
+contract questions under baseline, each option and both: answers 11/16 and retrieval 13/15 in every
+setting, with the same five failures (Q05, Q06, Q07, Q10, Q13). `benchmarks/needle.py --compare`
+scores 100% in every setting, but that test is saturated (needles have unique names), so it cannot
+show a difference either way.
 
-**Needle-in-haystack baseline (built-in engine, 100% on single and multi-part questions across
-sizes 50k to 1.5M characters with the defaults):**
+Why this is not a surprise: the built-in engine reads every section equally, so section order
+cannot matter to it, and the benchmark's failures are paraphrase misses that neither option
+addresses. The edge-ordering idea targets language models, which have not been tested with it.
+An earlier version of this report claimed these options improve performance; that claim had no
+evidence and is withdrawn. An earlier version of the ordering code was also silently discarded by
+a later re-sort; that bug is fixed and covered by `tests/test_context.py`.
 
-| Needle depth | Single-topic | Multi-topic |
-|---:|---:|---:|
-| 0.0 (start) | 100% | 100% |
-| 0.25 | 100% | 100% |
-| 0.5 | 100% | 100% |
-| 0.75 | 100% | 100% |
-| 1.0 (end) | 100% | 100% |
+To show a benefit one needs a test where the baseline fails for reasons these options address
+(crowded-out sub-questions, repeated boilerplate), ideally with a real model. Not done.
 
-(The built-in BM25 search + parent-child chunking already avoids the needle problem for typical
-document sizes. Context-rot and recursive are for cases where the question is structurally hard or
-the document is at the edge of the retrieval budget.)
+## 13. Self-service keys (0.9.0)
 
-**How to use:**
+Registration, email verification, one-time key display, per-account usage counts and owner alerts
+are covered by 17 tests in `tests/test_accounts.py`, including an end-to-end run over a real
+socket. Not verified: delivery through a real SMTP server, GitHub issue creation against the real
+GitHub API, and operation with several server processes (the account file is single-writer).
+See [ACCOUNTS.md](ACCOUNTS.md).
 
-```python
-from longdoc import DocumentQA, QAConfig
-
-qa = DocumentQA.from_file(
-    "contract.pdf",
-    config=QAConfig(
-        context_rot=True,       # optional: clean retrieved context
-        recursive=True,         # optional: decompose multi-part questions
-        min_relevance=0.25,     # (default) drop weak sections
-    ),
-)
-answer = qa.ask("What is X and what is Y?")
-```
-
-```bash
-longdoc ask contract.pdf "What is X and what is Y?" --context-rot --recursive
-# Not yet wired into CLI; use the library for now.
-```
-
-**Still to measure:** full contract benchmark with and without context-rot and recursive, to
-ensure no regressions on the existing test cases.
-
-## 13. Final Status: v0.9.0 Release Checklist
-
-### Verified in This Session
-
-**Dependency-free core:**
-- Zero packages required by default (stdlib only).
-- Tests: 213 pass in clean venv, 252 pass with full dev environment.
-- Load test: 300 req/s sustained, 503 back-pressure working, p95 <250ms at 64 clients.
-
-**All retrieval & answer features:**
-- Parent-child chunking with BM25 search.
-- Prompt caching (cached_document strategy).
-- Context-rot: weak-section filtering, deduplication, strength envelope.
-- Recursive retrieval: multi-part question decomposition and merging.
-- Needle-in-haystack test: 100 percent accuracy at all depths.
-- Built-in extractive engine: 75 percent answer accuracy on contract benchmark.
-
-**Integrations:**
-- Library: DocumentQA, DocumentService, AsyncDocumentQA all tested.
-- HTTP API: CLI, RemoteClient, curl, Node 22, all tested.
-- Flask example: works without anthropic import.
-- Django example: works, documented for Celery background indexing.
-- FastAPI mount: requires optional fastapi extra.
-
-**Documentation:**
-- docs/INTEGRATION.md updated for 0.9.0.
-- docs/DEPLOYMENT.md: multi-process, Docker, TLS, monitoring, scaling.
-- README.md: install via git+, status box, all features listed.
-- Dockerfile: updated to use built-in server (dependency-free).
-
-### Not Verified (Low Priority)
-
-1. Docker build: syntax verified; build requires Docker daemon.
-2. Windows/macOS native: code is cross-platform; use WSL 2 on Windows.
-3. Multi-process stress test: guidance provided; docs include caveats.
-4. Live Claude/OpenAI: tested against local stand-ins only.
-
-### Recommended Use Cases
-
-- Internal tool: single process, in-memory store, no key required (production-ready).
-- Document Q&A API: behind nginx, 4 processes, shared store (ready).
-- Integrated into Django/Flask: library or mount example (ready).
-- Kubernetes: Docker image + replicas, documented (ready, not tested).
