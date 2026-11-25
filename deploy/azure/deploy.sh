@@ -158,7 +158,13 @@ render_yaml > "$YAML_FILE"
 
 log "Deploying the app"
 if az containerapp show -n "$APP" -g "$RG" -o none 2>/dev/null; then
-  az containerapp update -n "$APP" -g "$RG" --yaml "$YAML_FILE" -o none
+  # Re-run: change only the image. Replacing the whole definition would erase settings and
+  # secrets added since (email, alerts) because they are not in this script's YAML.
+  if [ -n "$REG_BLOCK" ]; then
+    az containerapp update -n "$APP" -g "$RG" --image "$IMAGE" -o none
+  else
+    echo "App already exists and uses the public Python image: nothing to update."
+  fi
 else
   az containerapp create -n "$APP" -g "$RG" --environment "$ENV_NAME" --yaml "$YAML_FILE" -o none
 fi

@@ -29,6 +29,24 @@ Set an SMTP server and the link is emailed:
 can test locally. For local testing you can also set `LONGDOC_ACCOUNTS_DEV=1` to have the register
 call return the link. Never use that setting on a public server.
 
+### On Azure with Gmail (simplest)
+
+Create a Gmail **app password** (Google Account > Security > 2-Step Verification on, then
+https://myaccount.google.com/apppasswords). In Azure Cloud Shell, enter it at the hidden prompt:
+
+```bash
+read -rsp "Gmail app password: " GPW; echo; GPW=${GPW// /}
+az containerapp secret set -n longdoc-app -g longdoc-rg --secrets smtp-password="$GPW" -o none
+az containerapp update -n longdoc-app -g longdoc-rg --set-env-vars \
+  LONGDOC_SMTP_HOST=smtp.gmail.com LONGDOC_SMTP_PORT=587 \
+  LONGDOC_SMTP_USER=you@gmail.com LONGDOC_SMTP_FROM=you@gmail.com \
+  LONGDOC_SMTP_PASSWORD=secretref:smtp-password LONGDOC_OWNER_EMAIL=you@gmail.com -o none
+unset GPW
+```
+
+Gmail allows roughly 500 messages a day and sends from your Gmail address. For your own domain
+or higher volume, use a transactional service (Azure Communication Services, SendGrid, ...).
+
 ## Alerts to you
 
 Every event is logged, and written to `LONGDOC_EVENTS_FILE` if set. Add either or both:
