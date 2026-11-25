@@ -18,10 +18,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     LONGDOC_STORE_DIR=/data
 RUN useradd --create-home --uid 10001 app && mkdir /data && chown app /data
 COPY --from=build /dist/*.whl /tmp/
-RUN pip install --no-cache-dir "$(ls /tmp/*.whl)[pdf,server]" && rm /tmp/*.whl
+# Default: stdlib server (dependency-free). For multi-process: `--framework fastapi --workers N`
+RUN pip install --no-cache-dir "$(ls /tmp/*.whl)[pdf]" && rm /tmp/*.whl
 USER app
 VOLUME ["/data"]
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"
-CMD ["uvicorn", "longdoc.server.asgi:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+CMD ["longdoc", "serve", "--host", "0.0.0.0", "--port", "8000"]

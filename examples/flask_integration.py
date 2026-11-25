@@ -3,15 +3,16 @@
     pip install "longdoc-qa[pdf]" flask
     FLASK_APP=examples/flask_integration.py flask run
 
-`DocumentService` has no web-framework dependency: create one per process and call it
-from your own routes, behind your own authentication.
+`DocumentService` uses only the standard library by default: no extra packages or API keys
+needed to get started. Set ANTHROPIC_API_KEY to use Claude; without it, the built-in
+extractive engine answers by quoting the document. Create one service per process and call
+it from your own routes, behind your own authentication.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-import anthropic
 from flask import Flask, jsonify, request
 
 from longdoc import (
@@ -57,8 +58,3 @@ def refused(exc: RefusalError) -> Any:
 @app.errorhandler(LongDocError)
 def bad_request(exc: LongDocError) -> Any:
     return jsonify(error="bad_request", message=str(exc)), 400
-
-
-@app.errorhandler(anthropic.RateLimitError)
-def rate_limited(exc: anthropic.RateLimitError) -> Any:
-    return jsonify(error="rate_limited", message="Try again shortly."), 429
