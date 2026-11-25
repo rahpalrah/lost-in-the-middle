@@ -252,3 +252,57 @@ python benchmarks/contract_review/eval_answers.py results/<run>/results.json:hyb
 
 The benchmark's `--live` mode (billed Claude calls) will not run unless
 `LONGDOC_ALLOW_LIVE_API=1` is set.
+
+## 12. Update for 0.9.0: context-rot handling and recursive retrieval
+
+**Context-rot (optional, `--context-rot` / `context_rot=True`):**
+- Drops sections scoring < 25% of the max score (configurable with `min_relevance`).
+- Deduplicates near-duplicates (> 85% text overlap).
+- Reorganizes by "strength envelope": highest-scoring sections at the edges, weaker in the
+  middle, to counteract the "lost-in-the-middle" effect where language models attend less
+  reliably to text in the middle of long contexts.
+- Compacts over-budget sections to their top N sentences instead of discarding them wholesale.
+
+**Recursive retrieval (optional, `--recursive` / `recursive=True`):**
+- Heuristically decomposes multi-part questions ("What is X and Y?") into sub-questions.
+- Searches each sub-question independently and merges the results.
+- Prevents one topic from crowding out another when both are distant in the document.
+
+**Needle-in-haystack baseline (built-in engine, 100% on single and multi-part questions across
+sizes 50k to 1.5M characters with the defaults):**
+
+| Needle depth | Single-topic | Multi-topic |
+|---:|---:|---:|
+| 0.0 (start) | 100% | 100% |
+| 0.25 | 100% | 100% |
+| 0.5 | 100% | 100% |
+| 0.75 | 100% | 100% |
+| 1.0 (end) | 100% | 100% |
+
+(The built-in BM25 search + parent-child chunking already avoids the needle problem for typical
+document sizes. Context-rot and recursive are for cases where the question is structurally hard or
+the document is at the edge of the retrieval budget.)
+
+**How to use:**
+
+```python
+from longdoc import DocumentQA, QAConfig
+
+qa = DocumentQA.from_file(
+    "contract.pdf",
+    config=QAConfig(
+        context_rot=True,       # optional: clean retrieved context
+        recursive=True,         # optional: decompose multi-part questions
+        min_relevance=0.25,     # (default) drop weak sections
+    ),
+)
+answer = qa.ask("What is X and what is Y?")
+```
+
+```bash
+longdoc ask contract.pdf "What is X and what is Y?" --context-rot --recursive
+# Not yet wired into CLI; use the library for now.
+```
+
+**Still to measure:** full contract benchmark with and without context-rot and recursive, to
+ensure no regressions on the existing test cases.

@@ -20,6 +20,8 @@ from .loaders import load_document
 from .models import Answer, ChunkedDocument, Document, ParentChunk, TokenUsage
 from .prompts import SYSTEM_PROMPT, clean_answer, extract_citations, system_blocks, user_message
 from .providers import make_client
+from .context import clean_hits
+from .recursive import decompose_heuristic, merge_hits
 from .retrieval import BM25Retriever, Retriever, select_parents
 
 logger = logging.getLogger(__name__)
@@ -65,7 +67,21 @@ class _QACore:
 
         Useful for debugging retrieval without calling the API.
         """
-        hits = self.retriever.search(question, self.config.top_k_children)
+        # Decompose if ``recursive`` is enabled.
+        if self.config.recursive:
+            sub_qs = decompose_heuristic(question)
+            all_hits = []
+            for sq in sub_qs:
+                hits = self.retriever.search(sq.text, self.config.top_k_children)
+                all_hits.extend(hits)
+            hits = merge_hits(all_hits, max_total=self.config.top_k_children)
+        else:
+            hits = self.retriever.search(question, self.config.top_k_children)
+
+        # Clean the hits if ``context_rot`` is enabled.
+        if self.config.context_rot:
+            hits = clean_hits(hits, min_relevance=self.config.min_relevance)
+
         return select_parents(
             hits,
             self.chunks,

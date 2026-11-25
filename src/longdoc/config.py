@@ -83,6 +83,15 @@ class QAConfig:
             support them).
         system_prompt: Override the built-in instructions. Keep it constant: any change
             invalidates the prompt cache.
+        context_rot: Clean the retrieved context before it is used (see
+            :mod:`longdoc.context`): drop weak sections, drop near-duplicates, put the strongest
+            evidence at the start and end, and compact over-budget sections to the sentences that
+            matter. Reduces the "lost in the middle" effect and wasted tokens.
+        recursive: Retrieve recursively (see :mod:`longdoc.recursive`): split a multi-part
+            question into sub-questions, search each over a tree of sections, and merge the
+            results, so no part of the question is crowded out by another.
+        min_relevance: With ``context_rot``, a section is kept only if its score is at least this
+            share of the best section's score.
     """
 
     model: str = DEFAULT_MODEL
@@ -95,6 +104,9 @@ class QAConfig:
     cache_ttl: CacheTTL = "5m"
     fallbacks: Fallbacks = "default"
     system_prompt: str | None = None
+    context_rot: bool = False
+    recursive: bool = False
+    min_relevance: float = 0.25
 
     def __post_init__(self) -> None:
         if not self.model:
@@ -105,6 +117,8 @@ class QAConfig:
             raise ConfigurationError("max_tokens must be positive.")
         if self.top_k_children <= 0 or self.max_parents <= 0 or self.max_context_chars <= 0:
             raise ConfigurationError("Retrieval limits must be positive.")
+        if not 0.0 <= self.min_relevance <= 1.0:
+            raise ConfigurationError("min_relevance must be between 0 and 1.")
         if self.cache_ttl not in ("5m", "1h"):
             raise ConfigurationError('cache_ttl must be "5m" or "1h".')
         if isinstance(self.fallbacks, str) and self.fallbacks != "default":
